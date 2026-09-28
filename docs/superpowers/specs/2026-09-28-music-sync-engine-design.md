@@ -26,18 +26,32 @@ two devices over the local Wi-Fi network so both end up identical.
 - Wireless sync over the local network when both devices are reachable.
 - Manual trigger: user taps "Sync" on the phone and/or runs a command on the
   laptop. No background automation.
-- Samsung Music remains the phone player; the sync app does not integrate with it.
+- Samsung Music remains the phone player; the sync app does not integrate with it
+  for playback.
+- In-app file/folder browsing (playlists = folders), so renaming/moving playlists
+  does not require Samsung Files.
+- In-app metadata editing on the phone: filename, title, artist, album, album
+  artist, genre, track number, and lyrics — written into the file and synced to
+  the laptop as an ordinary MODIFY.
+- "Send to playlist" in two taps: move a song to another folder, synced both ways.
+- Sync must work without Wi-Fi too: over a phone/laptop hotspot, USB tethering,
+  or ADB forwarding — same protocol, manual-IP target.
 
 ## 3. Non-goals (explicitly cut)
 
-- No music player UI. Sync-only app.
+- No playback UI. Samsung Music remains the player; this app adds browsing,
+  editing, and sync.
 - No all-files-access permission. Phone folder access via SAF folder picker
   (scoped, read-write, persisted).
 - No 24/7 watchers, no foreground service, no auto-trigger on network presence.
 - No trash folder. Deletes are permanent; the journal is the record.
-- No rename/move detection (no payload hashing, no tag parsing, no metadata
-  fingerprinting). A rename is treated as DELETE + CREATE. Duplicates (a song
-  copied into two playlists) are preserved as-is — never misclassified as moves.
+- No rename/move detection in the ENGINE: identity is the content hash only; a
+  rename is DELETE + CREATE. The engine does NOT parse tags or fingerprint
+  metadata to infer moves. Duplicates (a song copied into two playlists) are
+  preserved as-is — never misclassified as moves.
+- The ANDROID APP does read/write tags for editing (that is its job); a tag edit
+  surfaces to the engine as an ordinary MODIFY (same path, new hash).
+- No internet dependency: v1 sync is local-network only (no cloud relay).
 - No authentication (trusted home LAN). Shared token is a later option.
 - Conflict policy is last-writer-wins by timestamp, with the loser preserved as a
   `.sync-conflict-<ts>` file. Full clash UX is deferred.
@@ -138,9 +152,13 @@ IP entry as fallback in the app settings).
      matches — duplicate ops collapse).
 4. **Transfer plan** — ordered:
    a. create parent directories
-   b. stream files to temp names (`.ms-partial-*`), verifying sha256 on both ends
-   c. atomic rename into place
-   d. **deletes last**
+   b. **content-addressed skip:** before streaming, if the remote already holds a
+      file with the same sha256 under ANY path, copy it locally instead of
+      transferring bytes. Makes moves/renames cost zero transfer.
+   c. stream remaining files to temp names (`.ms-partial-*`), verifying sha256 on
+      both ends
+   d. atomic rename into place
+   e. **deletes last**
 5. **Commit** — update `manifest`, journal applied remote ops (tagged with the
    source device), advance peer cursor in `sync_state`.
 6. **Post-sync (phone only)** — `MediaScannerConnection.scanFile()` on every
@@ -161,7 +179,9 @@ the journal is never purged, so an interrupted session is simply re-attempted.
 ## 8. Conflict resolution (default; refinement deferred)
 
 - Same path, both sides changed (different sha256): **last-writer-wins** by
-  `ts_ns` (scan time — approximate, accepted).
+  `ts_ns`. App-driven edits are journaled at action time (exact timestamps);
+  scan-detected changes use scan time (approximate). Both sides may now edit
+  metadata — the same rule applies.
 - Loser is preserved as `path.sync-conflict-<ts>.mp3` on the side that had it, and
   the event is journaled. Nothing is silently dropped.
 - True two-sided edits are expected to be rare (single user; only the laptop edits
@@ -202,15 +222,29 @@ Config file (e.g. `~/.config/music-syncer/config.toml`): `base_path`, `port`,
 - **Folder access:** SAF `ACTION_OPEN_DOCUMENT_TREE` picker, one-time, persisted
   (`takePersistableUriPermission`). No all-files permission. The user points it at
   the main music folder (contains only music).
-- **UI (minimal):**
-  - Status screen: folder status, laptop discovered?, last sync, transfer counts.
+- **UI:**
+  - **Browser** — folder tree (playlists); tap a folder to list songs; song
+    actions: **Rename** (filename), **Edit tags**, **Move to folder** ("send to
+    playlist", 2 taps), **Delete**. (Playback stays in Samsung Music; optionally
+    a best-effort `ACTION_VIEW` intent to hand a file to it.)
+  - **Metadata editor** — title, artist, album, album artist, genre, track
+    number, and a multi-line **lyrics** field. Writes ID3v2 frames (mp3) / MP4
+    atoms (m4a) into the file.
+  - **Status screen** — folder status, laptop discovered?, last sync, transfer
+    counts, manual laptop address.
   - **Scan** button — run the scan (§6), refresh the log.
   - **Sync** button — discover laptop (mDNS `NsdManager`, manual-IP fallback),
     run the session (§7), then the MediaStore rescan.
   - **Log** screen — readable journal entries (same as `ms log`).
+- **App actions are journaled immediately at action time** (exact timestamps for
+  LWW); the scan (§6) remains the safety net for everything else.
 - **No foreground service, no watcher, no auto-trigger** (v1).
 - **Dependencies:** Room (SQLite), OkHttp (HTTP), NsdManager (discovery), SAF
-  DocumentFile, `MediaScannerConnection`.
+  DocumentFile, `MediaScannerConnection`, **jaudiotagger** (ID3v2 + MP4 tag
+  read/write).
+- **Implementation risk to verify:** jaudiotagger's MP4 lyrics support (`©lyr`) —
+  if unsupported, disable lyrics editing for the 25 m4a files in v1 (mp3 is the
+  primary path).
 - **Android quirks to handle in implementation:** SAF tree access is slower than
   raw paths for large scans (acceptable at ~6k files); MediaStore may leave stale
   entries after deletes (player-side refresh behavior is out of scope).
@@ -234,10 +268,28 @@ Config file (e.g. `~/.config/music-syncer/config.toml`): `base_path`, `port`,
 - mDNS service may need `avahi` running on the laptop; manual-IP fallback covers
   cases where it is unavailable.
 
+### Transports when there is no Wi-Fi
+
+Same protocol; only the discovery/target changes. The manual-IP field covers all
+of these with zero code changes:
+
+| transport | how | cost |
+|---|---|---|
+| Phone hotspot (works offline) | laptop joins the phone's hotspot; mDNS works on it | free |
+| Laptop hotspot | `nmcli device wifi hotspot`; phone joins | free |
+| USB tethering | phone shares network over USB; laptop uses it; manual-IP | free |
+| ADB forward | `adb forward tcp:8756 tcp:8756`; phone targets `127.0.0.1:8756` | free (one command) |
+
+Deferred: Bluetooth PAN (fiddly, ~2-3 Mbps), cloud relay (needs a server + auth),
+offline bundle (zip journal + changed files for manual transfer).
+
 ## 14. Explicitly deferred
 
 - Auto-sync trigger on same-Wi-Fi.
 - FileObserver / always-on watcher with true change timestamps.
 - mDNS on the laptop auto-start (systemd service).
-- Trash folder, player UI, tag/metadata parsing, auth token.
+- Trash folder, playback UI, auth token.
 - Clash UX refinement beyond LWW + `.sync-conflict` copies.
+- Bluetooth PAN transport, cloud relay, offline bundle export.
+- Laptop-side tag editor (laptop metadata edits continue via existing tools; they
+  flow through the engine as MODIFY).
