@@ -152,3 +152,19 @@ def test_second_sync_is_noop(pair, tmp_path):
     db_path2 = _client_scan(root_b, tmp_path)
     s = _sync(root_b, db_path2, srv, tmp_path)
     assert s["fetched"] == [] and s["deleted"] == [] and s["pushed"] == []
+
+
+def test_schema_version_mismatch_raises(tmp_path: Path):
+    root_a = tmp_path / "A"
+    root_b = tmp_path / "B"
+    root_a.mkdir(); root_b.mkdir()
+    srv = SyncServer(root_a, tmp_path / "s.db", "laptop", schema_version=2)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        db_path = _client_scan(root_b, tmp_path)
+        with pytest.raises(ValueError, match="schema mismatch"):
+            run_sync_session(f"http://127.0.0.1:{srv.port}", root_b, db_path, "phone")
+    finally:
+        srv.shutdown()
+        t.join(timeout=5)

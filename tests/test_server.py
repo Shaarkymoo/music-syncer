@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import threading
 import urllib.request
 import urllib.parse
@@ -92,3 +93,37 @@ def test_post_sync_returns_server_state(server):
         data = json.loads(r.read())
     assert data["server_journal_ops"] == []
     assert data["server_manifest"] == [["Rock/A.mp3", 9, 1, "sha"]]
+
+
+def test_server_binds_requested_port(tmp_path: Path):
+    # Grab a free port by binding to 0, reading it, and closing (tiny race ok).
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    root = tmp_path / "root"
+    root.mkdir()
+    srv = SyncServer(root, tmp_path / "s.db", "laptop", port=port)
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        assert srv.port == port
+    finally:
+        srv.shutdown()
+        t.join(timeout=5)
+
+
+def test_post_file_rejects_empty_path(server):
+    import urllib.error
+    import hashlib
+    body = b"anything"
+    sha = hashlib.sha256(body).hexdigest()  # valid sha: only the path guard may reject
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{server.port}/file?path=&sha={sha}",
+        data=body, method="POST")
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req)
+    assert exc.value.code == 400
+    # No stray partial file may be written (e.g. in the parent of the root).
+    assert not list(server.root.parent.glob(f".ms-partial-*"))
+    assert not list(server.root.glob(f".ms-partial-*"))

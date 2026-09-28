@@ -81,8 +81,8 @@ def main(argv: list[str] | None = None) -> int:
         conn = db.init_db(db_path)
         scan_mod.scan(root, conn, "laptop", time.time_ns())
         conn.close()
-        print(f"music-syncer serving {root} on :{port} — Ctrl-C to stop")
-        srv = server_mod.SyncServer(root, db_path, "laptop")
+        srv = server_mod.SyncServer(root, db_path, "laptop", port=port)
+        print(f"music-syncer serving {root} on :{srv.port} — Ctrl-C to stop")
         with discovery.advertise("laptop", srv.port):
             try:
                 srv.serve_forever()

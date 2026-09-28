@@ -27,6 +27,8 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
 
     # 1. Handshake: learn server id + how much of OUR journal the server has seen.
     hs = _http_json(f"{server_url}/handshake?device_id={urllib.parse.quote(our_device)}")
+    if hs["schema_version"] != SCHEMA_VERSION:
+        raise ValueError(f"schema mismatch: server {hs['schema_version']} != client {SCHEMA_VERSION}")
     server_device = hs["server_device_id"]
     server_cursor_for_us = hs["client_cursor"]            # server.sync_state[us]
     server_journal_head = hs["server_journal_head"]
@@ -50,16 +52,18 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     server_manifest = {p: (s, m, h) for (p, s, m, h) in resp["server_manifest"]}
 
     # 4. OUR plan: what we must fetch / delete / conflict-preserve.
+    #    peer_cursor = how much of OUR journal the peer (server) has seen.
     plan = merge.build_plan(our_manifest, our_ops, server_manifest, server_ops,
-                            our_cursor, our_device)
+                            server_cursor_for_us, our_device)
     remote_ops = {op["path"]: op["op"] for op in server_ops}
     summary = apply.apply_plan(root, plan, conn, our_device, server_device, remote_ops,
                                now_ns, lambda rel: _http_get_bytes(
                                    f"{server_url}/file?path={urllib.parse.quote(rel)}"))
 
     # 5. SERVER's plan: what the server needs (fetch = push to it; delete/conflict = applied at /done).
+    #    peer_cursor = how much of the SERVER's journal WE have seen.
     server_plan = merge.build_plan(server_manifest, server_ops,
-                                   our_manifest, our_ops, server_cursor_for_us,
+                                   our_manifest, our_ops, our_cursor,
                                    server_device)
     pushed: list[str] = []
     for rel, _size, sha in server_plan.fetch:

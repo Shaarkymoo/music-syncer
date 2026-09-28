@@ -23,7 +23,8 @@ def _safe_join(root: Path, rel: str) -> Path | None:
 
 
 class SyncServer:
-    def __init__(self, root: Path, db_path: Path, device_id: str, schema_version: int = SCHEMA_VERSION):
+    def __init__(self, root: Path, db_path: Path, device_id: str, schema_version: int = SCHEMA_VERSION,
+                 port: int = 0):
         self.root = root
         self.device_id = device_id
         self.schema_version = schema_version
@@ -32,7 +33,7 @@ class SyncServer:
         self._conn = db.init_db(db_path, check_same_thread=False)
         self._lock = threading.Lock()
         self._sessions: dict[str, dict] = {}  # device_id -> client state
-        httpd = ThreadingHTTPServer(("0.0.0.0", 0), self._make_handler())
+        httpd = ThreadingHTTPServer(("0.0.0.0", port), self._make_handler())
         self.httpd = httpd
         self.port = httpd.server_address[1]
 
@@ -117,6 +118,9 @@ class SyncServer:
                         })
                     elif parsed.path == "/file":
                         rel = qs.get("path", [""])[0]
+                        if not rel.strip():
+                            self.send_error(400)
+                            return
                         expected = qs.get("sha", [""])[0]
                         target = _safe_join(server.root, rel)
                         if target is None:

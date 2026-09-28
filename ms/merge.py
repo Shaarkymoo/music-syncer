@@ -6,7 +6,7 @@ class Plan:
     fetch: list[tuple[str, int, str]] = field(default_factory=list)      # get bytes from remote
     push: list[tuple[str, int, str]] = field(default_factory=list)       # remote needs our bytes
     delete: list[str] = field(default_factory=list)
-    conflict_loser: list[tuple[str, str, str]] = field(default_factory=list)  # (path, ts_ns, sha256)
+    conflict_loser: list[tuple[str, int, str]] = field(default_factory=list)  # (path, ts_ns, sha256)
 
 
 def _latest_op_by_path(journal: list[dict]) -> dict[str, dict]:
@@ -25,12 +25,17 @@ def build_plan(local_manifest: dict, local_journal: list[dict],
     remote_latest = _latest_op_by_path(remote_journal)
     local_sha = {p: v[2] for p, v in local_manifest.items()}
     remote_sha = {p: v[2] for p, v in remote_manifest.items()}
+    # Index the local journal once so the per-path predicates below don't
+    # rescan the whole journal for every path (O(paths × journal) -> O(paths + journal)).
+    ops_by_path: dict[str, list[dict]] = {}
+    for op in local_journal:
+        ops_by_path.setdefault(op["path"], []).append(op)
 
     for path, (size, _mtime, sha) in sorted(remote_manifest.items()):
         if path not in local_manifest:
             unseen_local_delete = any(
                 op["id"] > peer_cursor and op["op"] == "DELETE" and op["device"] == our_device
-                for op in local_journal if op["path"] == path)
+                for op in ops_by_path.get(path, []))
             if unseen_local_delete:
                 continue  # we deleted it; the remote's plan will delete it too
             plan.fetch.append((path, size, sha))
@@ -50,7 +55,7 @@ def build_plan(local_manifest: dict, local_journal: list[dict],
             continue
         unseen_local_change = any(
             op["id"] > peer_cursor and op["op"] in ("CREATE", "MODIFY") and op["device"] == our_device
-            for op in local_journal if op["path"] == path)
+            for op in ops_by_path.get(path, []))
         if unseen_local_change:
             plan.push.append((path, local_manifest[path][0], local_manifest[path][2]))
         else:
