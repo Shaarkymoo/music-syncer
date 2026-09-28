@@ -1,0 +1,54 @@
+from dataclasses import dataclass, field
+
+
+@dataclass
+class Plan:
+    fetch: list[tuple[str, int, str]] = field(default_factory=list)      # get bytes from remote
+    push: list[tuple[str, int, str]] = field(default_factory=list)       # remote needs our bytes
+    delete: list[str] = field(default_factory=list)
+    conflict_loser: list[tuple[str, str, str]] = field(default_factory=list)  # (path, ts_ns, sha256)
+
+
+def _latest_op_by_path(journal: list[dict]) -> dict[str, dict]:
+    """Last op per path (journal is ordered by id; later wins)."""
+    latest: dict[str, dict] = {}
+    for op in journal:
+        latest[op["path"]] = op
+    return latest
+
+
+def build_plan(local_manifest: dict, local_journal: list[dict],
+               remote_manifest: dict, remote_journal: list[dict],
+               peer_cursor: int, our_device: str) -> Plan:
+    plan = Plan()
+    local_latest = _latest_op_by_path(local_journal)
+    remote_latest = _latest_op_by_path(remote_journal)
+    local_sha = {p: v[2] for p, v in local_manifest.items()}
+    remote_sha = {p: v[2] for p, v in remote_manifest.items()}
+
+    for path, (size, _mtime, sha) in sorted(remote_manifest.items()):
+        if path not in local_manifest:
+            plan.fetch.append((path, size, sha))
+        elif local_sha[path] == sha:
+            continue
+        else:  # both sides have different content
+            local_ts = local_latest[path]["ts_ns"] if path in local_latest else 0
+            remote_ts = remote_latest[path]["ts_ns"] if path in remote_latest else 0
+            if local_ts > remote_ts:  # local wins; remote must take ours
+                plan.push.append((path, local_manifest[path][0], local_manifest[path][2]))
+            else:  # remote wins; we take theirs, preserve ours
+                plan.fetch.append((path, size, sha))
+                plan.conflict_loser.append((path, local_ts, local_sha[path]))
+
+    for path, (_size, _mtime, _sha) in sorted(local_manifest.items()):
+        if path in remote_manifest:
+            continue
+        unseen_local_change = any(
+            op["id"] > peer_cursor and op["op"] in ("CREATE", "MODIFY") and op["device"] == our_device
+            for op in local_journal if op["path"] == path)
+        if unseen_local_change:
+            plan.push.append((path, local_manifest[path][0], local_manifest[path][2]))
+        else:
+            plan.delete.append(path)
+
+    return plan
