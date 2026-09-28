@@ -661,8 +661,7 @@ def build_plan(local_manifest: dict, local_journal: list[dict],
             local_ts = local_latest[path]["ts_ns"] if path in local_latest else 0
             remote_ts = remote_latest[path]["ts_ns"] if path in remote_latest else 0
             if local_ts > remote_ts:  # local wins; remote must take ours
-                plan.push.append((path, *local_manifest[path][0::2] if False else
-                                  (local_manifest[path][0], local_manifest[path][2])))
+                plan.push.append((path, local_manifest[path][0], local_manifest[path][2]))
             else:  # remote wins; we take theirs, preserve ours
                 plan.fetch.append((path, size, sha))
                 plan.conflict_loser.append((path, local_ts, local_sha[path]))
@@ -963,6 +962,8 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 
+import pytest
+
 from ms import db
 from ms.server import SyncServer
 
@@ -1049,10 +1050,7 @@ def test_post_sync_returns_server_state(server):
     assert data["server_manifest"] == [["Rock/A.mp3", 9, 1, "sha"]]
 ```
 
-Note: `tests/conftest.py` must define the `pytest` fixture import — add at the top of `tests/conftest.py` (created in Task 1):
-```python
-import pytest  # noqa: F401
-```
+Note: `tests/conftest.py` (created in Task 1) defines shared fixtures; `test_server.py` imports `pytest` directly.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -1463,7 +1461,7 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
         "device_id": our_device,
         "server_cursor": our_cursor,
         "journal_ops": our_ops,
-        "manifest": [[p, s, m, h] for (p, s, m, h) in our_manifest.items() for (s, m, h) in [our_manifest[p]]],
+        "manifest": [[p, s, m, h] for p, (s, m, h) in our_manifest.items()],
     }).encode()
     resp = _http_json(f"{server_url}/sync", method="POST", body=body)
     server_ops = resp["server_journal_ops"]
