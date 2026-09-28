@@ -8,12 +8,21 @@ SERVICE_TYPE = "_music-syncer._tcp.local."
 SERVICE_NAME = "music-syncer"
 
 
+def _local_ip() -> str:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    finally:
+        s.close()
+
+
 @contextmanager
 def advertise(device_id: str, port: int) -> Iterator[None]:
     zc = Zeroconf()
     info = ServiceInfo(
         SERVICE_TYPE, f"{SERVICE_NAME}.{SERVICE_TYPE}",
-        addresses=[socket.inet_aton("0.0.0.0")], port=port,
+        addresses=[socket.inet_aton(_local_ip())], port=port,
         properties={"device_id": device_id})
     zc.register_service(info)
     try:

@@ -17,5 +17,6 @@ def load_config(path: Path | None = None) -> dict:
             data = tomllib.load(f)
         cfg.update({k: v for k, v in data.items() if k in cfg})
     if cfg["db_path"] is None:
-        cfg["db_path"] = str(p.parent.parent / "music-syncer.db")  # ~/.local/share/music-syncer.db
+        data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+        cfg["db_path"] = str(data_home / "music-syncer.db")
     return cfg
