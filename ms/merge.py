@@ -28,6 +28,11 @@ def build_plan(local_manifest: dict, local_journal: list[dict],
 
     for path, (size, _mtime, sha) in sorted(remote_manifest.items()):
         if path not in local_manifest:
+            unseen_local_delete = any(
+                op["id"] > peer_cursor and op["op"] == "DELETE" and op["device"] == our_device
+                for op in local_journal if op["path"] == path)
+            if unseen_local_delete:
+                continue  # we deleted it; the remote's plan will delete it too
             plan.fetch.append((path, size, sha))
         elif local_sha[path] == sha:
             continue

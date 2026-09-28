@@ -1,0 +1,154 @@
+import os
+import threading
+from pathlib import Path
+
+import pytest
+
+from ms import db, scan
+from ms.client import run_sync_session
+from ms.hashing import sha256_file
+from ms.server import SyncServer
+
+
+@pytest.fixture
+def pair(tmp_path: Path):
+    """Two engines: server root A (device 'laptop'), client root B (device 'phone')."""
+    root_a = tmp_path / "A"
+    root_b = tmp_path / "B"
+    root_a.mkdir(); root_b.mkdir()
+    srv = SyncServer(root_a, tmp_path / "s.db", "laptop")
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    yield root_a, root_b, srv
+    srv.shutdown()
+    t.join(timeout=5)
+
+
+def _client_scan(root_b: Path, tmp_path: Path):
+    db_path = tmp_path / "c.db"
+    conn = db.init_db(db_path)
+    scan.scan(root_b, conn, "phone", 1)
+    return db_path
+
+
+def _sync(root_b: Path, db_path: Path, srv, tmp_path: Path):
+    return run_sync_session(f"http://127.0.0.1:{srv.port}", root_b, db_path, "phone")
+
+
+def test_one_way_create_propagates(pair, tmp_path):
+    root_a, root_b, srv = pair
+    (root_a / "Rock").mkdir()
+    (root_a / "Rock" / "A.mp3").write_bytes(b"content-a")
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    db_path = _client_scan(root_b, tmp_path)
+    s = _sync(root_b, db_path, srv, tmp_path)
+    assert s["fetched"] == ["Rock/A.mp3"]
+    assert (root_b / "Rock" / "A.mp3").read_bytes() == b"content-a"
+    assert sha256_file(root_a / "Rock" / "A.mp3") == sha256_file(root_b / "Rock" / "A.mp3")
+
+
+def test_bidirectional_creates(pair, tmp_path):
+    root_a, root_b, srv = pair
+    (root_a / "A.mp3").write_bytes(b"from-laptop")
+    (root_b / "B.mp3").write_bytes(b"from-phone")
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    db_path = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path, srv, tmp_path)
+    assert (root_a / "A.mp3").exists() and (root_b / "A.mp3").exists()
+    assert (root_a / "B.mp3").read_bytes() == b"from-phone"
+    assert (root_b / "B.mp3").read_bytes() == b"from-phone"
+
+
+def test_delete_propagates(pair, tmp_path):
+    root_a, root_b, srv = pair
+    (root_a / "A.mp3").write_bytes(b"x")
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    db_path = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path, srv, tmp_path)          # initial sync
+    (root_a / "A.mp3").unlink()
+    scan.scan(root_a, srv._conn, "laptop", 2)
+    db_path2 = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path2, srv, tmp_path)          # server deleted it; client must too
+    assert not (root_b / "A.mp3").exists()
+
+
+def test_phone_delete_propagates_to_laptop(pair, tmp_path):
+    root_a, root_b, srv = pair
+    (root_a / "A.mp3").write_bytes(b"x")
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    db_path = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path, srv, tmp_path)          # initial sync: both have A.mp3
+    (root_b / "A.mp3").unlink()                    # phone deletes (e.g. via Samsung Music)
+    db_path2 = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path2, srv, tmp_path)
+    assert not (root_a / "A.mp3").exists()         # laptop must delete too
+
+
+def test_phone_move_propagates(pair, tmp_path):
+    root_a, root_b, srv = pair
+    (root_a / "Rock").mkdir()
+    (root_a / "Rock" / "Song.mp3").write_bytes(b"content")
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    db_path = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path, srv, tmp_path)          # initial: both have Rock/Song.mp3
+    (root_b / "Fav").mkdir()
+    os.replace(root_b / "Rock" / "Song.mp3", root_b / "Fav" / "Song.mp3")  # phone moves it
+    db_path2 = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path2, srv, tmp_path)
+    assert (root_a / "Fav" / "Song.mp3").exists()       # laptop gets it at new path
+    assert not (root_a / "Rock" / "Song.mp3").exists()  # old path gone
+
+
+def test_conflict_remote_wins_and_converges(pair, tmp_path):
+    root_a, root_b, srv = pair
+    (root_a / "A.mp3").write_bytes(b"base")
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    db_path = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path, srv, tmp_path)           # both at "base"
+    (root_a / "A.mp3").write_bytes(b"laptop-edit")
+    os.utime(root_a / "A.mp3", ns=(1, 3_000_000_000))  # newer
+    scan.scan(root_a, srv._conn, "laptop", 3_000_000_000)
+    (root_b / "A.mp3").write_bytes(b"phone-edit")
+    os.utime(root_b / "A.mp3", ns=(1, 2_000_000_000))  # older
+    db_path2 = _client_scan(root_b, tmp_path)
+    s = _sync(root_b, db_path2, srv, tmp_path)
+    assert (root_b / "A.mp3").read_bytes() == b"laptop-edit"   # newer wins
+    assert len(s["conflicts"]) == 1                            # phone's old bytes preserved
+    assert any(f.name.startswith(".A.mp3.sync-conflict-") for f in root_b.iterdir())
+
+
+def test_move_cost_zero_transfer(pair, tmp_path, monkeypatch):
+    root_a, root_b, srv = pair
+    (root_a / "Rock").mkdir()
+    (root_a / "Rock" / "Song.mp3").write_bytes(b"same-content")
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    db_path = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path, srv, tmp_path)           # initial: full transfer
+    # Laptop moves the song to a new playlist folder (delete + create, same content).
+    (root_a / "Fav").mkdir()
+    os.replace(root_a / "Rock" / "Song.mp3", root_a / "Fav" / "Song.mp3")
+    scan.scan(root_a, srv._conn, "laptop", 2)
+    db_path2 = _client_scan(root_b, tmp_path)
+    # Count actual byte transfers during the second sync.
+    import ms.client as client_mod
+    original = client_mod._http_get_bytes
+    transfers: list[str] = []
+    def counting_get(url):
+        transfers.append(url)
+        return original(url)
+    monkeypatch.setattr(client_mod, "_http_get_bytes", counting_get)
+    _sync(root_b, db_path2, srv, tmp_path)
+    assert (root_b / "Fav" / "Song.mp3").read_bytes() == b"same-content"
+    assert not (root_b / "Rock" / "Song.mp3").exists()
+    assert transfers == []  # content-addressed copy: zero bytes over the wire
+
+
+def test_second_sync_is_noop(pair, tmp_path):
+    root_a, root_b, srv = pair
+    (root_a / "A.mp3").write_bytes(b"x")
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    db_path = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path, srv, tmp_path)
+    db_path2 = _client_scan(root_b, tmp_path)
+    s = _sync(root_b, db_path2, srv, tmp_path)
+    assert s["fetched"] == [] and s["deleted"] == [] and s["pushed"] == []
