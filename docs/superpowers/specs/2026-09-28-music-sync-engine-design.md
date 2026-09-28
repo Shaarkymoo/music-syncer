@@ -6,8 +6,9 @@
 ## 1. Problem
 
 The user maintains a canonical music library on a Linux laptop
-(`/media/shaarky/Data/Shaarav/my songs/`, ~26 GB, ~6,050 mp3 + 25 m4a, organized
-as subfolders = playlists). Music is offloaded to an Android phone for listening
+(`/media/shaarky/Data/Shaarav/my songs/`, ~26 GB, ~6,050 mp3, organized
+as subfolders = playlists; a few legacy m4a files are being converted and are out
+of scope for editing). Music is offloaded to an Android phone for listening
 via Samsung Music. Today this is a manual, one-way, monthly copy:
 
 - Changes made on the phone (delete, move between playlist folders, rename) are
@@ -34,8 +35,10 @@ two devices over the local Wi-Fi network so both end up identical.
   artist, genre, track number, and lyrics — written into the file and synced to
   the laptop as an ordinary MODIFY.
 - "Send to playlist" in two taps: move a song to another folder, synced both ways.
-- Sync must work without Wi-Fi too: over a phone/laptop hotspot, USB tethering,
-  or ADB forwarding — same protocol, manual-IP target.
+- Deletions made inside Samsung Music (outside the app) are detected on demand
+  by the manual scan; they propagate as DELETEs to the laptop.
+- Sync works over the home Wi-Fi or a phone/laptop hotspot, with fully automatic
+  discovery (mDNS) and handshake — no manual IP entry.
 
 ## 3. Non-goals (explicitly cut)
 
@@ -52,6 +55,7 @@ two devices over the local Wi-Fi network so both end up identical.
 - The ANDROID APP does read/write tags for editing (that is its job); a tag edit
   surfaces to the engine as an ordinary MODIFY (same path, new hash).
 - No internet dependency: v1 sync is local-network only (no cloud relay).
+- No manual IP entry: discovery and handshake are fully automatic (mDNS).
 - No authentication (trusted home LAN). Shared token is a later option.
 - Conflict policy is last-writer-wins by timestamp, with the loser preserved as a
   `.sync-conflict-<ts>` file. Full clash UX is deferred.
@@ -114,8 +118,12 @@ Per-peer sync progress.
 
 ## 6. Change detection (scan-on-demand)
 
-Triggered manually: phone "Scan" button / laptop `ms scan`, and automatically as
-part of every sync session on both sides.
+Triggered manually: phone "Scan" button / laptop `ms scan`, and automatically
+as part of every sync session on both sides.
+
+Deletions made in Samsung Music (outside the app) are detected by this same
+scan — run the Scan button / `ms scan` manually after deleting. There is no
+background watcher; the manifest diff is the detector.
 
 1. Walk the music tree (recursively; ignore hidden files/dirs).
 2. Compare each entry against `manifest`:
@@ -133,9 +141,13 @@ mistaken for moves.
 
 ## 7. Sync protocol
 
-HTTP/1.1 over the local network, fixed port (default 8756). mDNS service name:
-`music-syncer._tcp` (laptop advertises; phone discovers via `NsdManager`; manual
-IP entry as fallback in the app settings).
+HTTP/1.1 over the local network, fixed port (default 8756). Discovery is fully
+automatic via mDNS (`music-syncer._tcp`). **Symmetric discovery:** both devices
+advertise AND resolve the service; the side that finds the other first initiates;
+on simultaneous discovery, the lower `device_id` initiates (deterministic). No
+manual IP entry anywhere. Implementation risk: multicast on Android phone-hotspot
+host↔client is device-dependent — symmetric discovery means at least one direction
+succeeds; verify early on the user's devices.
 
 **Session (phone = client, laptop = server):**
 
@@ -176,6 +188,16 @@ IP entry as fallback in the app settings).
 **Crash safety:** temp files are cleaned on next session start; ops are idempotent;
 the journal is never purged, so an interrupted session is simply re-attempted.
 
+### Verification (multi-level checksums)
+
+| level | what | when |
+|---|---|---|
+| L1 per-file sha256 | identity + integrity unit | every scan |
+| L2 transfer double-check | sender and receiver hash independently during streaming; compare before atomic rename | every transfer |
+| L3 tree root digest | digest over the sorted manifest (path+sha256); equal ⇒ reconciliation skipped | every handshake |
+| L4 post-sync re-check | re-scan changed files after commit; confirm manifest/journal consistency | every session |
+| L5 full verify | `ms verify` / Verify button — re-hash the whole tree on both sides, compare root digests (slow, ~26 GB; the peace-of-mind check) | on demand |
+
 ## 8. Conflict resolution (default; refinement deferred)
 
 - Same path, both sides changed (different sha256): **last-writer-wins** by
@@ -213,6 +235,7 @@ CLI (with suggested shell aliases):
 - `ms serve` — scan, then listen for a phone sync session (Ctrl-C to stop).
 - `ms scan` — scan + update journal/log without a session.
 - `ms log` — print the readable journal.
+- `ms verify` — full-tree re-hash + compare against the peer (L5).
 
 Config file (e.g. `~/.config/music-syncer/config.toml`): `base_path`, `port`,
 `db_path`. Only `base_path` is required.
@@ -231,7 +254,7 @@ Config file (e.g. `~/.config/music-syncer/config.toml`): `base_path`, `port`,
     number, and a multi-line **lyrics** field. Writes ID3v2 frames (mp3) / MP4
     atoms (m4a) into the file.
   - **Status screen** — folder status, laptop discovered?, last sync, transfer
-    counts, manual laptop address.
+    counts, **Verify** button (L5 full-tree check).
   - **Scan** button — run the scan (§6), refresh the log.
   - **Sync** button — discover laptop (mDNS `NsdManager`, manual-IP fallback),
     run the session (§7), then the MediaStore rescan.
@@ -242,9 +265,9 @@ Config file (e.g. `~/.config/music-syncer/config.toml`): `base_path`, `port`,
 - **Dependencies:** Room (SQLite), OkHttp (HTTP), NsdManager (discovery), SAF
   DocumentFile, `MediaScannerConnection`, **jaudiotagger** (ID3v2 + MP4 tag
   read/write).
-- **Implementation risk to verify:** jaudiotagger's MP4 lyrics support (`©lyr`) —
-  if unsupported, disable lyrics editing for the 25 m4a files in v1 (mp3 is the
-  primary path).
+- **mp3 only (v1):** the tag editor targets ID3v2 (mp3) exclusively; legacy m4a
+  files are out of scope for editing (being converted). The engine still mirrors
+  any file type — it treats every file as opaque bytes.
 - **Android quirks to handle in implementation:** SAF tree access is slower than
   raw paths for large scans (acceptable at ~6k files); MediaStore may leave stale
   entries after deletes (player-side refresh behavior is out of scope).
@@ -265,8 +288,7 @@ Config file (e.g. `~/.config/music-syncer/config.toml`): `base_path`, `port`,
 - Phone music folder path — chosen in-app via SAF picker at first run.
 - Laptop base path — config file; defaults to the user's library path.
 - Port default 8756; adjustable in config if it collides.
-- mDNS service may need `avahi` running on the laptop; manual-IP fallback covers
-  cases where it is unavailable.
+- mDNS on the laptop requires `avahi` (advertise + resolve).
 
 ### Transports when there is no Wi-Fi
 
@@ -275,13 +297,12 @@ of these with zero code changes:
 
 | transport | how | cost |
 |---|---|---|
-| Phone hotspot (works offline) | laptop joins the phone's hotspot; mDNS works on it | free |
-| Laptop hotspot | `nmcli device wifi hotspot`; phone joins | free |
-| USB tethering | phone shares network over USB; laptop uses it; manual-IP | free |
-| ADB forward | `adb forward tcp:8756 tcp:8756`; phone targets `127.0.0.1:8756` | free (one command) |
+| Phone hotspot (works offline) | laptop joins the phone's hotspot; symmetric mDNS discovers | free |
+| Laptop hotspot | `nmcli device wifi hotspot`; phone joins; symmetric mDNS discovers | free |
 
-Deferred: Bluetooth PAN (fiddly, ~2-3 Mbps), cloud relay (needs a server + auth),
-offline bundle (zip journal + changed files for manual transfer).
+Deferred: USB tethering / ADB forward, Bluetooth PAN (fiddly, ~2-3 Mbps), cloud
+relay (needs a server + auth), offline bundle (zip journal + changed files for
+manual transfer).
 
 ## 14. Explicitly deferred
 
