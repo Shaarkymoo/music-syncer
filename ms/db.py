@@ -26,8 +26,8 @@ CREATE TABLE IF NOT EXISTS sync_state (
 """
 
 
-def init_db(db_path: Path) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(db_path))
+def init_db(db_path: Path, check_same_thread: bool = True) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(db_path), check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
     conn.commit()
