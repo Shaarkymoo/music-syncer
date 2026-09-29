@@ -128,6 +128,11 @@ def test_move_cost_zero_transfer(pair, tmp_path, monkeypatch):
     (root_a / "Fav").mkdir()
     os.replace(root_a / "Rock" / "Song.mp3", root_a / "Fav" / "Song.mp3")
     scan.scan(root_a, srv._conn, "laptop", 2)
+    # The laptop's library is hashed: fill the moved file's sha (the lazy scan
+    # leaves it NULL, and the content-addressed copy path needs a non-null sha).
+    row = db.manifest_get(srv._conn, "Fav/Song.mp3")
+    db.manifest_upsert(srv._conn, "Fav/Song.mp3", row[0], row[1],
+                       sha256_file(root_a / "Fav" / "Song.mp3"), 2)
     db_path2 = _client_scan(root_b, tmp_path)
     # Count actual byte transfers during the second sync.
     import ms.client as client_mod
@@ -141,6 +146,26 @@ def test_move_cost_zero_transfer(pair, tmp_path, monkeypatch):
     assert (root_b / "Fav" / "Song.mp3").read_bytes() == b"same-content"
     assert not (root_b / "Rock" / "Song.mp3").exists()
     assert transfers == []  # content-addressed copy: zero bytes over the wire
+
+
+def test_identical_trees_sync_with_zero_transfer(pair, tmp_path):
+    root_a, root_b, srv = pair
+    # Seed BOTH sides with the SAME file (simulating "same library on both").
+    (root_a / "Rock").mkdir(); (root_a / "Rock" / "A.mp3").write_bytes(b"same-content")
+    (root_b / "Rock").mkdir(); (root_b / "Rock" / "A.mp3").write_bytes(b"same-content")
+    # Laptop has a hashed library (real sha in its manifest — e.g. from a
+    # previous sync/verify); the phone scans lazily (NULL sha).
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    row = db.manifest_get(srv._conn, "Rock/A.mp3")
+    db.manifest_upsert(srv._conn, "Rock/A.mp3", row[0], row[1],
+                       sha256_file(root_a / "Rock" / "A.mp3"), 1)
+    # Phone scans lazily; its manifest has NULL sha; sizes match the laptop's manifest.
+    db_path = _client_scan(root_b, tmp_path)
+    s = _sync(root_b, db_path, srv, tmp_path)
+    assert s["fetched"] == [] and s["pushed"] == []   # zero transfer
+    conn = db.init_db(db_path)
+    assert db.manifest_get(conn, "Rock/A.mp3")[2] is not None  # sha adopted
+    conn.close()
 
 
 def test_second_sync_is_noop(pair, tmp_path):

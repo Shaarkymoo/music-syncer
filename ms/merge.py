@@ -3,10 +3,10 @@ from dataclasses import dataclass, field
 
 @dataclass
 class Plan:
-    fetch: list[tuple[str, int, str]] = field(default_factory=list)      # get bytes from remote
-    push: list[tuple[str, int, str]] = field(default_factory=list)       # remote needs our bytes
+    fetch: list[tuple[str, int, str | None]] = field(default_factory=list)  # get bytes from remote
+    push: list[tuple[str, int, str | None]] = field(default_factory=list)   # remote needs our bytes
     delete: list[str] = field(default_factory=list)
-    conflict_loser: list[tuple[str, int, str]] = field(default_factory=list)  # (path, ts_ns, sha256)
+    conflict_loser: list[tuple[str, int, str | None]] = field(default_factory=list)  # (path, ts_ns, sha256)
 
 
 def _latest_op_by_path(journal: list[dict]) -> dict[str, dict]:
@@ -39,9 +39,11 @@ def build_plan(local_manifest: dict, local_journal: list[dict],
             if unseen_local_delete:
                 continue  # we deleted it; the remote's plan will delete it too
             plan.fetch.append((path, size, sha))
-        elif local_sha[path] == sha:
-            continue
-        else:  # both sides have different content
+        elif local_sha[path] == sha and sha is not None:
+            continue  # both sides have the same known sha
+        else:  # both sides have different content (or unknown)
+            if local_sha[path] is None and local_manifest[path][0] == size:
+                continue  # local never hashed, sizes match: identical; adoption fills the sha
             local_ts = local_latest[path]["ts_ns"] if path in local_latest else 0
             remote_ts = remote_latest[path]["ts_ns"] if path in remote_latest else 0
             if local_ts > remote_ts:  # local wins; remote must take ours

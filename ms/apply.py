@@ -19,7 +19,7 @@ def _resolve(root: Path, rel: str) -> Path:
     return target
 
 
-def _conflict_name(rel: str, ts_ns: str) -> str:
+def _conflict_name(rel: str, ts_ns: int) -> str:
     p = Path(rel)
     return f".{p.name}.sync-conflict-{ts_ns}{p.suffix}"
 
@@ -46,7 +46,7 @@ def apply_plan(root: Path, plan: Plan, conn, our_device: str, remote_device: str
     # --- fetches (writes) ---
     for rel, _size, sha in sorted(plan.fetch):
         target = _resolve(root, rel)
-        src_rel = local_sha_to_path.get(sha)
+        src_rel = local_sha_to_path.get(sha) if sha is not None else None
         if src_rel == rel and target.is_file():
             continue  # already applied: same content at same path — no-op
         if src_rel and src_rel != rel:
@@ -63,7 +63,8 @@ def apply_plan(root: Path, plan: Plan, conn, our_device: str, remote_device: str
                                    target.stat().st_mtime_ns, sha, now_ns)
                 continue
         data = fetch_bytes(rel)
-        if sha256_file_bytes(data) != sha:
+        received_sha = sha256_file_bytes(data)
+        if sha is not None and received_sha != sha:
             raise ValueError(f"sha256 mismatch after transfer: {rel}")
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp = target.parent / f"{PARTIAL_PREFIX}{secrets.token_hex(4)}-{target.name}"
@@ -71,8 +72,8 @@ def apply_plan(root: Path, plan: Plan, conn, our_device: str, remote_device: str
         os.replace(tmp, target)
         summary["fetched"].append(rel)
         db.journal_append(conn, remote_ops.get(rel, "CREATE"), rel,
-                          len(data), sha, now_ns, remote_device)
-        db.manifest_upsert(conn, rel, len(data), target.stat().st_mtime_ns, sha, now_ns)
+                          len(data), received_sha, now_ns, remote_device)
+        db.manifest_upsert(conn, rel, len(data), target.stat().st_mtime_ns, received_sha, now_ns)
 
     # --- deletes last ---
     for rel in sorted(plan.delete):

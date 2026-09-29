@@ -77,3 +77,25 @@ def test_conflict_local_wins():
                       _m("A.mp3", "remote"), remote_journal, 0, "me")
     assert plan.push == [("A.mp3", 10, "local")]
     assert plan.fetch == [] and plan.conflict_loser == []
+
+
+def test_null_local_sha_same_size_is_identical():
+    # local has NULL sha, remote has sha, sizes match -> no fetch, no conflict
+    plan = build_plan({"A.mp3": (10, 5, None)}, [], {"A.mp3": (10, 5, "remotesha")}, [], 0, "me")
+    assert plan.fetch == [] and plan.push == [] and plan.delete == []
+
+
+def test_null_local_sha_different_size_is_change():
+    plan = build_plan({"A.mp3": (10, 5, None)}, [], {"A.mp3": (20, 5, "remotesha")}, [], 0, "me")
+    assert plan.fetch == [("A.mp3", 20, "remotesha")] or plan.push or plan.delete
+
+
+def test_both_null_sha_different_size_is_change():
+    # both sides lazy-scanned but sizes differ -> real change (LWW), not identical
+    local_journal = [{"id": 1, "op": "MODIFY", "path": "A.mp3", "size": 10,
+                      "sha256": None, "ts_ns": 100, "device": "me"}]
+    remote_journal = [{"id": 1, "op": "MODIFY", "path": "A.mp3", "size": 20,
+                       "sha256": None, "ts_ns": 200, "device": "phone"}]
+    plan = build_plan({"A.mp3": (10, 5, None)}, local_journal,
+                      {"A.mp3": (20, 5, None)}, remote_journal, 0, "me")
+    assert plan.fetch == [("A.mp3", 20, None)] or plan.push or plan.delete

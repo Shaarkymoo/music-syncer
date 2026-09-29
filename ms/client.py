@@ -4,7 +4,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from ms import apply, db, merge, scan as scan_mod
+from ms import adopt, apply, db, merge, scan as scan_mod
 
 SCHEMA_VERSION = 1
 
@@ -51,6 +51,11 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     server_ops = resp["server_journal_ops"]
     server_manifest = {p: (s, m, h) for (p, s, m, h) in resp["server_manifest"]}
 
+    # 3.5. Adopt server shas for identical local files (no transfer, no hashing),
+    #      then refresh our manifest so both plans see the adopted shas.
+    adopt.adopt_shas(conn, server_manifest, root, now_ns)
+    our_manifest = {p: (s, m, h) for (p, s, m, h, _l) in db.manifest_all(conn)}
+
     # 4. OUR plan: what we must fetch / delete / conflict-preserve.
     #    peer_cursor = how much of OUR journal the peer (server) has seen.
     plan = merge.build_plan(our_manifest, our_ops, server_manifest, server_ops,
@@ -68,7 +73,9 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     pushed: list[str] = []
     for rel, _size, sha in server_plan.fetch:
         data = (root / rel).read_bytes()
-        url = f"{server_url}/file?path={urllib.parse.quote(rel)}&sha={sha}"
+        url = f"{server_url}/file?path={urllib.parse.quote(rel)}"
+        if sha:
+            url += f"&sha={sha}"
         _http_json(url, method="POST", body=data)
         pushed.append(rel)
 

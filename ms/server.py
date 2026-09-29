@@ -8,7 +8,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from ms import apply, db, scan as scan_mod
+from ms import adopt, apply, db, scan as scan_mod
 
 PARTIAL_PREFIX = ".ms-partial-"
 SCHEMA_VERSION = 1
@@ -102,6 +102,8 @@ class SyncServer:
                         req = json.loads(body)
                         with server._lock:
                             scan_mod.scan(server.root, server._conn, server.device_id, time.time_ns())
+                            client_manifest = {p: (s, m, h) for (p, s, m, h) in req.get("manifest", [])}
+                            adopt.adopt_shas(server._conn, client_manifest, Path(server.root), time.time_ns())
                             server._sessions[req["device_id"]] = {
                                 "journal_ops": req.get("journal_ops", []),
                                 "manifest": req.get("manifest", []),
@@ -127,7 +129,7 @@ class SyncServer:
                             self.send_error(404)
                             return
                         actual = hashlib.sha256(body).hexdigest()
-                        if actual != expected:
+                        if expected and actual != expected:
                             self._send_json({"ok": False, "error": "sha256 mismatch"}, 400)
                             return
                         target.parent.mkdir(parents=True, exist_ok=True)

@@ -59,7 +59,12 @@ def main(argv: list[str] | None = None) -> int:
         # the stored manifest, defeating tamper detection. Verify is a pure
         # re-hash of the tree against the stored manifest.
         mismatches = []
+        verified = 0
+        unverified = 0
         for (rel, size, mtime_ns, sha, _l) in db.manifest_all(conn):
+            if sha is None:
+                unverified += 1  # lazy scan: never hashed -> not a mismatch
+                continue
             p = root / rel
             if not p.is_file():
                 mismatches.append(rel)
@@ -67,11 +72,13 @@ def main(argv: list[str] | None = None) -> int:
             from ms.hashing import sha256_file
             if sha256_file(p) != sha:
                 mismatches.append(rel)
+            else:
+                verified += 1
         if mismatches:
             for rel in mismatches:
                 print(f"MISMATCH  {rel}")
         else:
-            print("OK: all files match stored hashes")
+            print(f"OK: {verified} verified, {unverified} unverified")
         conn.close()
         return 0
 
