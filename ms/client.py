@@ -71,10 +71,10 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     #    peer_cursor = how much of OUR journal the peer (server) has seen.
     plan = merge.build_plan(our_manifest, our_ops, server_manifest, server_ops,
                             server_cursor_for_us, our_device)
-    plan_items = [(rel, "fetch") for rel, _s, _sha in plan.fetch]
-    plan_items += [(rel, "delete") for rel in plan.delete]
-    plan_items += [(rel, "conflict") for rel, _ts, _sha in plan.conflict_loser]
-    for i, (rel, _kind) in enumerate(plan_items, 1):
+    plan_items = [rel for rel, _s, _sha in plan.fetch]
+    plan_items += list(plan.delete)
+    plan_items += [rel for rel, _ts, _sha in plan.conflict_loser]
+    for i, rel in enumerate(plan_items, 1):
         emit(progress, SyncPhase.PLAN, i, len(plan_items), "")
     remote_ops = {op["path"]: op["op"] for op in server_ops}
     summary = apply.apply_plan(root, plan, conn, our_device, server_device, remote_ops,
