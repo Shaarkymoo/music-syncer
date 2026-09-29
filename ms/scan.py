@@ -3,9 +3,11 @@ from pathlib import Path
 
 from ms import db
 from ms.hashing import fingerprint
+from ms.progress import Progress, SyncPhase, emit
 
 
-def scan(root: Path, conn, device_id: str, now_ns: int) -> int:
+def scan(root: Path, conn, device_id: str, now_ns: int,
+         progress: Progress | None = None) -> int:
     """Diff disk vs manifest; journal CREATE/MODIFY/DELETE; return journal head."""
     disk: dict[str, Path] = {}
     for p in root.rglob("*"):
@@ -19,7 +21,9 @@ def scan(root: Path, conn, device_id: str, now_ns: int) -> int:
             continue  # hidden file/dir: never mirrored
         disk[rel] = p
 
-    for rel in sorted(disk):
+    total = len(disk)
+    for i, rel in enumerate(sorted(disk), 1):
+        emit(progress, SyncPhase.SCAN, i, total, rel)
         path = disk[rel]
         size, mtime_ns = fingerprint(path)
         row = db.manifest_get(conn, rel)

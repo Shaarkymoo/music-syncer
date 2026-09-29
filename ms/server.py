@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from ms import adopt, apply, db, scan as scan_mod
+from ms.progress import Progress
 
 PARTIAL_PREFIX = ".ms-partial-"
 SCHEMA_VERSION = 1
@@ -24,10 +25,11 @@ def _safe_join(root: Path, rel: str) -> Path | None:
 
 class SyncServer:
     def __init__(self, root: Path, db_path: Path, device_id: str, schema_version: int = SCHEMA_VERSION,
-                 port: int = 0):
+                 port: int = 0, progress: Progress | None = None):
         self.root = root
         self.device_id = device_id
         self.schema_version = schema_version
+        self._progress = progress
         # ThreadingHTTPServer serves each request on a worker thread; the
         # server's _lock serializes all DB access, so cross-thread use is safe.
         self._conn = db.init_db(db_path, check_same_thread=False)
@@ -101,7 +103,8 @@ class SyncServer:
                     if parsed.path == "/sync":
                         req = json.loads(body)
                         with server._lock:
-                            scan_mod.scan(server.root, server._conn, server.device_id, time.time_ns())
+                            scan_mod.scan(server.root, server._conn, server.device_id,
+                                          time.time_ns(), progress=server._progress)
                             client_manifest = {p: (s, m, h) for (p, s, m, h) in req.get("manifest", [])}
                             adopt.adopt_shas(server._conn, client_manifest, Path(server.root), time.time_ns())
                             server._sessions[req["device_id"]] = {

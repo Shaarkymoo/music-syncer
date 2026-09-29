@@ -5,6 +5,7 @@ import urllib.request
 from pathlib import Path
 
 from ms import adopt, apply, db, merge, scan as scan_mod
+from ms.progress import Progress, SyncPhase, emit
 
 SCHEMA_VERSION = 1
 
@@ -21,9 +22,19 @@ def _http_get_bytes(url: str) -> bytes:
         return r.read()
 
 
-def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str) -> dict:
+def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str,
+                     progress: Progress | None = None) -> dict:
     conn = db.init_db(db_path)
     now_ns = time.time_ns()
+
+    # Count scanned files so the final DONE event can report the session total.
+    scanned = 0
+
+    def _counting(phase: SyncPhase, done: int, total: int, rel: str) -> None:
+        nonlocal scanned
+        if phase is SyncPhase.SCAN:
+            scanned = total
+        emit(progress, phase, done, total, rel)
 
     # 1. Handshake: learn server id + how much of OUR journal the server has seen.
     hs = _http_json(f"{server_url}/handshake?device_id={urllib.parse.quote(our_device)}")
@@ -34,7 +45,7 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     server_journal_head = hs["server_journal_head"]
 
     # 2. Local scan (fresh change detection on demand), then gather our state.
-    scan_mod.scan(root, conn, our_device, now_ns)
+    scan_mod.scan(root, conn, our_device, now_ns, progress=_counting)
     our_cursor_for_server = db.sync_state_get(conn, server_device)  # what we've seen of server
     our_cursor = our_cursor_for_server[0] if our_cursor_for_server else 0
     our_ops = db.journal_since(conn, server_cursor_for_us)
@@ -60,10 +71,17 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     #    peer_cursor = how much of OUR journal the peer (server) has seen.
     plan = merge.build_plan(our_manifest, our_ops, server_manifest, server_ops,
                             server_cursor_for_us, our_device)
+    plan_items = [(rel, "fetch") for rel, _s, _sha in plan.fetch]
+    plan_items += [(rel, "delete") for rel in plan.delete]
+    plan_items += [(rel, "conflict") for rel, _ts, _sha in plan.conflict_loser]
+    for i, (rel, _kind) in enumerate(plan_items, 1):
+        emit(progress, SyncPhase.PLAN, i, len(plan_items), "")
     remote_ops = {op["path"]: op["op"] for op in server_ops}
     summary = apply.apply_plan(root, plan, conn, our_device, server_device, remote_ops,
                                now_ns, lambda rel: _http_get_bytes(
                                    f"{server_url}/file?path={urllib.parse.quote(rel)}"))
+    for i, rel in enumerate(summary["fetched"], 1):
+        emit(progress, SyncPhase.TRANSFER, i, len(summary["fetched"]), rel)
 
     # 5. SERVER's plan: what the server needs (fetch = push to it; delete/conflict = applied at /done).
     #    peer_cursor = how much of the SERVER's journal WE have seen.
@@ -71,7 +89,8 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
                                    our_manifest, our_ops, our_cursor,
                                    server_device)
     pushed: list[str] = []
-    for rel, _size, sha in server_plan.fetch:
+    for i, (rel, _size, sha) in enumerate(server_plan.fetch, 1):
+        emit(progress, SyncPhase.TRANSFER, i, len(server_plan.fetch), rel)
         data = (root / rel).read_bytes()
         url = f"{server_url}/file?path={urllib.parse.quote(rel)}"
         if sha:
@@ -93,4 +112,6 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     conn.close()
 
     summary["pushed"] = pushed
+    total = scanned + len(plan_items) + len(pushed)
+    emit(progress, SyncPhase.DONE, total, total, "")
     return summary
