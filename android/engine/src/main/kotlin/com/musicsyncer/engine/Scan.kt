@@ -1,13 +1,15 @@
 package com.musicsyncer.engine
 
-fun scan(fs: Fs, store: SyncStore, deviceId: String, nowNs: Long): Long {
+fun scan(fs: Fs, store: SyncStore, deviceId: String, nowNs: Long, progress: ProgressListener? = null): Long {
     val disk = mutableMapOf<String, FsEntry>()
     for (e in fs.list()) {
         if (e.rel.substringAfterLast('/').startsWith(".ms-partial-")) { fs.delete(e.rel); continue }
         if (e.rel.split('/').any { it.startsWith(".") }) continue
         disk[e.rel] = e
     }
-    for (rel in disk.keys.sorted()) {
+    val total = disk.size
+    for ((i, rel) in disk.keys.sorted().withIndex()) {
+        emit(progress, SyncPhase.SCAN, i + 1, total, rel)
         val e = disk.getValue(rel)
         val row = store.manifestGet(rel)
         if (row == null) {

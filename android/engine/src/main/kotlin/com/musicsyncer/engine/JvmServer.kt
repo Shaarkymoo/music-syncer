@@ -14,6 +14,7 @@ class JvmServer(
     private val deviceId: String,
     val schemaVersion: Int = 1,
     port: Int = 0,
+    private val progress: ProgressListener? = null,
 ) {
     val port: Int
     private val server: HttpServer
@@ -96,7 +97,7 @@ class JvmServer(
                     }
                     "/sync" -> {
                         val req = GsonHolder.gson.fromJson(exchange.requestBody.reader(StandardCharsets.UTF_8), SyncRequest::class.java)
-                        scan(fs, store, deviceId, System.currentTimeMillis() * 1_000_000)
+                        scan(fs, store, deviceId, System.currentTimeMillis() * 1_000_000, progress)
                         val clientManifest = req.manifest.associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) }
                         adoptShas(store, clientManifest, fs, System.currentTimeMillis() * 1_000_000)
                         val serverOps = store.journalSince(req.serverCursor)

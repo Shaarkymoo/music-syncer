@@ -110,4 +110,83 @@ class PythonInteropTest {
             if (!proc.waitFor(5, TimeUnit.SECONDS)) proc.destroyForcibly()
         }
     }
+
+    @Test
+    @Timeout(120)
+    fun adoptsShaFromRealPythonServer() {
+        val root = repoRoot()
+        assumeTrue(pythonAvailable(root), "python3 with the ms package is not available; skipping Python interop test")
+
+        val serverRoot = dir.resolve("laptop"); Files.createDirectories(serverRoot)
+        val clientRoot = dir.resolve("phone"); Files.createDirectories(clientRoot)
+        val serverDb = dir.resolve("laptop.db")
+        val clientDb = dir.resolve("phone.db")
+
+        // Seed BOTH sides with the SAME file (simulating "same library on both").
+        val content = "same-content".encodeToByteArray()
+        Files.createDirectories(serverRoot.resolve("Rock"))
+        Files.write(serverRoot.resolve("Rock/A.mp3"), content)
+        Files.createDirectories(clientRoot.resolve("Rock"))
+        Files.write(clientRoot.resolve("Rock/A.mp3"), content)
+
+        // Hashed-laptop scenario (mirrors the Python adoption test): scan the
+        // server root lazily, then fill the manifest with the REAL sha.
+        val seed = ProcessBuilder(
+            "python3", "-c",
+            """
+            import os, sys
+            sys.path.insert(0, os.environ['MS_REPO'])
+            from pathlib import Path
+            from ms import db, scan
+            from ms.hashing import sha256_file
+            conn = db.init_db(Path(os.environ['MS_DB']))
+            scan.scan(Path(os.environ['MS_ROOT']), conn, 'laptop', 1)
+            row = db.manifest_get(conn, 'Rock/A.mp3')
+            db.manifest_upsert(conn, 'Rock/A.mp3', row[0], row[1],
+                               sha256_file(Path(os.environ['MS_ROOT']) / 'Rock' / 'A.mp3'), 1)
+            conn.close()
+            """.trimIndent(),
+        ).apply {
+            environment()["MS_REPO"] = root.toString()
+            environment()["MS_ROOT"] = serverRoot.toString()
+            environment()["MS_DB"] = serverDb.toString()
+        }.start()
+        assertTrue(
+            seed.waitFor(30, TimeUnit.SECONDS) && seed.exitValue() == 0,
+            "python seed failed: ${stderr(seed)}",
+        )
+
+        val proc = ProcessBuilder(
+            "python3", "-c",
+            """
+            import os, sys
+            sys.path.insert(0, os.environ['MS_REPO'])
+            from pathlib import Path
+            from ms.server import SyncServer
+            s = SyncServer(Path(os.environ['MS_ROOT']), Path(os.environ['MS_DB']), 'laptop')
+            print(s.port, flush=True)
+            s.serve_forever()
+            """.trimIndent(),
+        ).apply {
+            environment()["MS_REPO"] = root.toString()
+            environment()["MS_ROOT"] = serverRoot.toString()
+            environment()["MS_DB"] = serverDb.toString()
+        }.start()
+
+        try {
+            val port = readPort(proc)
+            assertTrue(port != null && port > 0, "python server failed to start: ${stderr(proc)}")
+            val url = "http://127.0.0.1:$port"
+
+            // Client root is pre-seeded with the identical file; it scans lazily
+            // (NULL sha). The server manifest holds the real sha -> adoption.
+            val store = JdbcStore("jdbc:sqlite:$clientDb")
+            val s = runSyncSession(url, PathFs(clientRoot), store, "phone")
+            assertTrue(s.fetched.isEmpty() && s.pushed.isEmpty(), "identical trees must sync with zero transfer, got: $s")
+            assertTrue(store.manifestGet("Rock/A.mp3")?.sha256 != null, "client manifest sha must be adopted from the real Python server")
+        } finally {
+            proc.destroy()
+            if (!proc.waitFor(5, TimeUnit.SECONDS)) proc.destroyForcibly()
+        }
+    }
 }
