@@ -8,7 +8,7 @@ def _conn(tmp_path: Path):
     return db.init_db(tmp_path / "t.db")
 
 
-def test_scan_detects_create(tmp_path: Path):
+def test_scan_detects_create_lazy(tmp_path: Path):
     root = tmp_path / "root"
     (root / "Rock").mkdir(parents=True)
     (root / "Rock" / "A.mp3").write_bytes(b"data")
@@ -16,7 +16,21 @@ def test_scan_detects_create(tmp_path: Path):
     scan.scan(root, conn, "laptop", 1000)
     ops = db.journal_since(conn, 0)
     assert [(o["op"], o["path"]) for o in ops] == [("CREATE", "Rock/A.mp3")]
-    assert db.manifest_get(conn, "Rock/A.mp3")[2] is not None  # has sha256
+    assert db.manifest_get(conn, "Rock/A.mp3")[2] is None  # lazy: no hash
+    conn.close()
+
+
+def test_scan_modify_is_lazy(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir(parents=True)
+    p = root / "A.mp3"
+    p.write_bytes(b"v1")
+    conn = _conn(tmp_path)
+    scan.scan(root, conn, "laptop", 1000)
+    p.write_bytes(b"v2-longer")  # size change -> MODIFY
+    scan.scan(root, conn, "laptop", 2000)
+    ops = db.journal_since(conn, 1)
+    assert [(o["op"], o["sha256"]) for o in ops] == [("MODIFY", None)]
     conn.close()
 
 
