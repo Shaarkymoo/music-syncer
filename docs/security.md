@@ -29,7 +29,9 @@ phones home.
   only does work while you have it open and tap a button (Scan / Sync /
   Verify / Find-laptop). Android may keep the process cached, but nothing runs
   in the background and nothing phones home.
-- The phone app **uses the network only when you tap Sync or Check-update.**
+- The phone app **uses the network when you tap Scan / Sync / Verify /
+  Find-laptop / Check-update, and for mDNS discovery at app launch.** Nothing
+  runs in the background.
 
 ## Where it works
 

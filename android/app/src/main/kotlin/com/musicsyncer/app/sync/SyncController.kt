@@ -54,10 +54,11 @@ class SyncController(
     fun scan() {
         if (_state.value.busy) return
         scope.launch {
+            _state.value = _state.value.copy(busy = true, error = null)
             try {
                 runScan(progressListener())
             } finally {
-                _state.value = _state.value.copy(progress = null)
+                _state.value = _state.value.copy(busy = false, progress = null)
             }
         }
     }
