@@ -41,6 +41,7 @@ class JvmServer(
 
     private fun err(exchange: HttpExchange, code: Int, json: String) {
         val bytes = json.encodeToByteArray()
+        exchange.responseHeaders.set("Content-Type", "application/json")
         exchange.sendResponseHeaders(code, bytes.size.toLong())
         exchange.responseBody.use { it.write(bytes) }
     }
@@ -60,7 +61,7 @@ class JvmServer(
                         ok(exchange, GsonHolder.gson.toJson(HandshakeResp(schemaVersion, deviceId, store.journalHead(), st?.lastSeenJournalId ?: 0L)))
                     }
                     "/manifest" -> {
-                        val man = store.manifestAll().map { listOf(it.path, it.size, it.mtimeNs, it.sha256) }
+                        val man = store.manifestAll().map { ManifestWire(it.path, it.size, it.mtimeNs, it.sha256) }
                         ok(exchange, GsonHolder.gson.toJson(man))
                     }
                     "/journal" -> {
@@ -74,12 +75,20 @@ class JvmServer(
                             if (rel.isBlank()) { err(exchange, 400, """{"ok":false,"error":"empty path"}"""); return@createContext }
                             val body = exchange.requestBody.readBytes()
                             if (Hashing.sha256(body) != expected) { err(exchange, 400, """{"ok":false,"error":"sha256 mismatch"}"""); return@createContext }
-                            fs.mkdirs(rel.substringBeforeLast('/', ""))
-                            fs.write(".ms-partial-x-$rel", body)
-                            fs.rename(".ms-partial-x-$rel", rel)
+                            // Random-token partial in the target's OWN directory (Python parity):
+                            // a fixed ".ms-partial-x-$rel" name would create a dot-DIRECTORY for
+                            // nested rels that scan never cleans, and collides under concurrency.
+                            val dir = rel.substringBeforeLast('/', "")
+                            val name = rel.substringAfterLast('/')
+                            val partial = (if (dir.isEmpty()) "" else "$dir/") + ".ms-partial-" + java.util.concurrent.ThreadLocalRandom.current().nextInt(0, Int.MAX_VALUE).toString(16) + "-" + name
+                            fs.mkdirs(dir)
+                            fs.write(partial, body)
+                            fs.rename(partial, rel)
                             ok(exchange, """{"ok":true}""")
                         } else {
-                            if (!fs.exists(rel)) { exchange.sendResponseHeaders(404, -1); exchange.close(); return@createContext }
+                            // Empty/directory path must 404, not 500: fs.exists("") is true for
+                            // the root dir and read() would throw.
+                            if (rel.isBlank() || !fs.exists(rel)) { exchange.sendResponseHeaders(404, -1); exchange.close(); return@createContext }
                             val bytes = fs.read(rel)
                             exchange.sendResponseHeaders(200, bytes.size.toLong())
                             exchange.responseBody.use { it.write(bytes) }
@@ -87,16 +96,16 @@ class JvmServer(
                     }
                     "/sync" -> {
                         val req = GsonHolder.gson.fromJson(exchange.requestBody.reader(StandardCharsets.UTF_8), SyncRequest::class.java)
-                        scan(fs, store, deviceId, System.nanoTime())
+                        scan(fs, store, deviceId, System.currentTimeMillis() * 1_000_000)
                         val serverOps = store.journalSince(req.serverCursor)
-                        val serverManifest = store.manifestAll().map { listOf(it.path, it.size, it.mtimeNs, it.sha256) }
+                        val serverManifest = store.manifestAll().map { ManifestWire(it.path, it.size, it.mtimeNs, it.sha256) }
                         ok(exchange, GsonHolder.gson.toJson(SyncResponse(schemaVersion, serverOps, serverManifest, emptyList(), store.journalHead())))
                     }
                     "/done" -> {
                         val req = GsonHolder.gson.fromJson(exchange.requestBody.reader(StandardCharsets.UTF_8), DoneRequest::class.java)
                         val plan = Plan(
                             delete = req.delete.toMutableList(),
-                            conflictLoser = req.conflicts.map { Triple(it[0] as String, (it[1] as Double).toLong(), it[2] as String) }.toMutableList(),
+                            conflictLoser = req.conflicts.map { Triple(it.path, it.tsNs, it.sha256) }.toMutableList(),
                         )
                         applyPlan(fs, store, plan, deviceId, req.deviceId, emptyMap(), req.tsNs) { ByteArray(0) }
                         store.syncStateSet(req.deviceId, req.clientJournalHead, req.tsNs)

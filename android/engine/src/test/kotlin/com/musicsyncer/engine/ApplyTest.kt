@@ -70,6 +70,21 @@ class ApplyTest {
         assertEquals(listOf("A.mp3"), summary.conflicts)
     }
 
+    @Test fun conflictLoserKeepsOriginalDirectory() {
+        Files.createDirectories(dir.resolve("Rock"))
+        Files.write(dir.resolve("Rock/A.mp3"), "my-old-content".encodeToByteArray())
+        val s = store(); s.manifestUpsert("Rock/A.mp3", 15, 1, "oldsha", 100)
+        val sha = Hashing.sha256("newsha".encodeToByteArray())
+        val plan = Plan(
+            fetch = mutableListOf(Triple("Rock/A.mp3", 6L, sha)),
+            conflictLoser = mutableListOf(Triple("Rock/A.mp3", 100L, "oldsha")),
+        )
+        val summary = applyPlan(fs(), s, plan, "me", "phone", mapOf("Rock/A.mp3" to "MODIFY"), 1000) { "newsha".encodeToByteArray() }
+        assertEquals("newsha", Files.readString(dir.resolve("Rock/A.mp3")))
+        assertTrue(Files.exists(dir.resolve("Rock/.A.mp3.sync-conflict-100.mp3")))
+        assertEquals(listOf("Rock/A.mp3"), summary.conflicts)
+    }
+
     @Test fun idempotentNoopJournalsNothing() {
         Files.write(dir.resolve("A.mp3"), "same".encodeToByteArray())
         val s = store()

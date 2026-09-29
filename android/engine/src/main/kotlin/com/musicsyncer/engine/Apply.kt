@@ -13,7 +13,10 @@ private fun conflictName(rel: String, tsNs: Long): String {
     val name = rel.substringAfterLast('/')
     val ext = name.substringAfterLast('.', "")
     val suffix = if (ext.isNotEmpty() && ext != name) ".$ext" else ""
-    return ".$name.sync-conflict-$tsNs$suffix"
+    // Keep the conflict file in the ORIGINAL directory (Python does
+    // target.parent / _conflict_name(...)); top-level rels have no prefix.
+    val dir = rel.substringBeforeLast('/', "")
+    return (if (dir.isEmpty()) "" else "$dir/") + ".$name.sync-conflict-$tsNs$suffix"
 }
 
 fun applyPlan(

@@ -39,7 +39,10 @@ private fun httpBytes(client: OkHttpClient, url: String, method: String = "GET",
 
 fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: String): SyncSummary {
     val client = OkHttpClient()
-    val nowNs = System.nanoTime()
+    // Wall-clock epoch-ns (Python uses time.time_ns()); System.nanoTime() is
+    // monotonic-since-boot and incomparable across devices, which would break
+    // cross-device LWW.
+    val nowNs = System.currentTimeMillis() * 1_000_000
 
     // 1. Handshake: learn server id + how much of OUR journal the server has seen.
     val hs = GsonHolder.gson.fromJson(
@@ -62,16 +65,14 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
         deviceId = ourDevice,
         serverCursor = ourCursor,
         journalOps = ourOps,
-        manifest = ourManifest.map { (p, v) -> listOf(p, v.first, v.second, v.third) },
+        manifest = ourManifest.map { (p, v) -> ManifestWire(p, v.first, v.second, v.third) },
     )
     val resp = GsonHolder.gson.fromJson(
         httpJson(client, "$serverUrl/sync", "POST", GsonHolder.gson.toJson(req)),
         SyncResponse::class.java,
     )
     val serverOps = resp.serverJournalOps
-    val serverManifest = resp.serverManifest.associate { row ->
-        row[0] as String to Triple((row[1] as Double).toLong(), (row[2] as Double).toLong(), row[3] as String)
-    }
+    val serverManifest = resp.serverManifest.associate { it.path to Triple(it.size, it.mtimeNs, it.sha256 ?: "") }
 
     // 4. OUR plan: peer_cursor = how much of OUR journal the server has seen.
     val plan = buildPlan(ourManifest, ourOps, serverManifest, serverOps, serverCursorForUs, ourDevice)
@@ -96,7 +97,7 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
         clientJournalHead = store.journalHead(),
         tsNs = nowNs,
         delete = serverPlan.delete,
-        conflicts = serverPlan.conflictLoser.map { listOf(it.first, it.second.toDouble(), it.third) },
+        conflicts = serverPlan.conflictLoser.map { ConflictWire(it.first, it.second, it.third) },
     )
     httpJson(client, "$serverUrl/done", "POST", GsonHolder.gson.toJson(done))
 

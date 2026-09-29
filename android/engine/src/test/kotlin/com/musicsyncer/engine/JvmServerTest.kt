@@ -99,4 +99,17 @@ class JvmServerTest {
             assertTrue(resp.serverManifest.isNotEmpty())
         } finally { srv.stop() }
     }
+
+    @Test fun manifestPreservesLongPrecisionOverWire() {
+        val (srv, store) = server()
+        try {
+            val big = 1_770_123_456_789_012_345L  // > 2^53: would lose precision via Double
+            store.manifestUpsert("Rock/Big.mp3", 9, big, "sha-big", 1)
+            val rows = GsonHolder.gson.fromJson(get(srv, "/manifest"), Array<ManifestWire>::class.java).toList()
+            val row = rows.first { it.path == "Rock/Big.mp3" }
+            assertEquals(big, row.mtimeNs)
+            assertEquals(9L, row.size)
+            assertEquals("sha-big", row.sha256)
+        } finally { srv.stop() }
+    }
 }
