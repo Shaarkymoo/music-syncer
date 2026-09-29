@@ -4,6 +4,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 
@@ -36,6 +37,16 @@ class FsTest {
         assertEquals(false, fs.exists("a.mp3"))
         fs.delete("b.mp3")
         assertEquals(false, fs.exists("b.mp3"))
+    }
+
+    @Test
+    fun statReturnsEntryForSingleFile() {
+        val fs = PathFs(dir)
+        fs.write("Rock/A.mp3", byteArrayOf(1, 2, 3))
+        val entry = fs.stat("Rock/A.mp3")
+        assertEquals("Rock/A.mp3", entry.rel)
+        assertEquals(3L, entry.size)
+        assertTrue(entry.mtimeNs > 0)
     }
 
     @Test

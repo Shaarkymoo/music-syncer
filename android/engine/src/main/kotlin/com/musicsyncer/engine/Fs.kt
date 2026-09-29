@@ -9,6 +9,7 @@ data class FsEntry(val rel: String, val size: Long, val mtimeNs: Long)
 
 interface Fs {
     fun list(): List<FsEntry>
+    fun stat(rel: String): FsEntry
     fun read(rel: String): ByteArray
     fun openRead(rel: String): InputStream
     fun write(rel: String, data: ByteArray)
@@ -39,6 +40,11 @@ class PathFs(private val root: Path) : Fs {
     }
 
     override fun read(rel: String): ByteArray = Files.readAllBytes(resolve(rel))
+    override fun stat(rel: String): FsEntry {
+        val p = resolve(rel)
+        val st = Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes::class.java)
+        return FsEntry(rel, st.size(), st.lastModifiedTime().to(java.util.concurrent.TimeUnit.NANOSECONDS))
+    }
     override fun openRead(rel: String): InputStream = Files.newInputStream(resolve(rel))
     override fun write(rel: String, data: ByteArray) {
         val p = resolve(rel)
