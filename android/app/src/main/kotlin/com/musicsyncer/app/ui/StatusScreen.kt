@@ -6,9 +6,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
@@ -19,9 +23,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.musicsyncer.app.MusicViewModel
+import com.musicsyncer.app.sync.ProgressState
 import com.musicsyncer.app.sync.SyncState
+import com.musicsyncer.app.sync.displayName
 import kotlinx.coroutines.launch
 
 @Composable
@@ -39,7 +46,7 @@ fun StatusScreen(vm: MusicViewModel) {
             Text("Last sync: ${s.lastSync ?: "-"}")
             Text("Summary: ${s.lastSummary ?: "-"}")
             s.error?.let { Text("Error: $it") }
-            if (s.busy) CircularProgressIndicator()
+            if (s.busy || s.progress != null) ProgressCard(s.progress)
         }
         vm.controller?.let { c ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -49,6 +56,51 @@ fun StatusScreen(vm: MusicViewModel) {
             }
             Button(onClick = { scope.launch { discoverAndSync(vm) } }, enabled = !(state?.busy ?: false)) { Text("Find laptop & sync") }
         }
+    }
+}
+
+/** Live progress card: phase label, overall + sub bars, counts, and the file currently being worked on. */
+@Composable
+private fun ProgressCard(progress: ProgressState?) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = progress?.phase?.displayName() ?: "Working",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            val fraction = progress?.let { if (it.total <= 0) 0f else it.done.toFloat() / it.total } ?: 0f
+            ProgressBar(fraction, indeterminate = progress == null)
+            ProgressBar(fraction, indeterminate = progress == null)
+            if (progress != null) {
+                Text(
+                    text = "${progress.done} / ${progress.total}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                val workingOn = progress.rel.ifBlank { "${progress.phase.displayName()}…" }
+                Text(
+                    text = "Now working on: $workingOn",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProgressBar(fraction: Float, indeterminate: Boolean) {
+    val color = MaterialTheme.colorScheme.primary
+    val track = MaterialTheme.colorScheme.surfaceVariant
+    if (indeterminate) {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = color, trackColor = track)
+    } else {
+        LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth(), color = color, trackColor = track)
     }
 }
 

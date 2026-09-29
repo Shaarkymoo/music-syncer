@@ -2,6 +2,8 @@ package com.musicsyncer.app.sync
 
 import android.content.Context
 import com.musicsyncer.engine.Fs
+import com.musicsyncer.engine.ProgressListener
+import com.musicsyncer.engine.SyncPhase
 import com.musicsyncer.engine.SyncStore
 import com.musicsyncer.engine.applyPlan
 import com.musicsyncer.engine.runSyncSession
@@ -19,7 +21,19 @@ data class SyncState(
     val lastSummary: String? = null,
     val busy: Boolean = false,
     val error: String? = null,
+    val progress: ProgressState? = null,
 )
+
+/** Live progress snapshot for the status UI, mirroring the engine's (phase, done, total, rel). */
+data class ProgressState(val phase: SyncPhase, val done: Int, val total: Int, val rel: String)
+
+/** Human-readable phase label for the status UI. */
+fun SyncPhase.displayName(): String = when (this) {
+    SyncPhase.SCAN -> "Scanning"
+    SyncPhase.PLAN -> "Planning"
+    SyncPhase.TRANSFER -> "Transferring"
+    SyncPhase.DONE -> "Done"
+}
 
 class SyncController(
     private val context: Context,
@@ -33,13 +47,23 @@ class SyncController(
 
     fun setServer(url: String) { _state.value = _state.value.copy(server = url) }
 
-    fun scan() {
-        if (_state.value.busy) return
-        scope.launch { runScan() }
+    private fun progressListener(): ProgressListener = ProgressListener { phase, done, total, rel ->
+        _state.value = _state.value.copy(progress = ProgressState(phase, done, total, rel))
     }
 
-    private suspend fun runScan(): Long = withContext(Dispatchers.IO) {
-        scan(fs, store, ourDevice, System.currentTimeMillis() * 1_000_000)
+    fun scan() {
+        if (_state.value.busy) return
+        scope.launch {
+            try {
+                runScan(progressListener())
+            } finally {
+                _state.value = _state.value.copy(progress = null)
+            }
+        }
+    }
+
+    private suspend fun runScan(progress: ProgressListener? = null): Long = withContext(Dispatchers.IO) {
+        scan(fs, store, ourDevice, System.currentTimeMillis() * 1_000_000, progress)
     }
 
     fun sync(serverUrl: String?) {
@@ -48,8 +72,8 @@ class SyncController(
         scope.launch {
             _state.value = _state.value.copy(busy = true, error = null)
             try {
-                runScan()
-                val summary = runSyncSession(url, fs, store, ourDevice)
+                runScan(progressListener())
+                val summary = runSyncSession(url, fs, store, ourDevice, progressListener())
                 MediaRescan.rescan(context, summary.fetched + summary.copied + summary.deleted + summary.conflicts)
                 _state.value = _state.value.copy(
                     lastSync = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date()),
@@ -58,7 +82,7 @@ class SyncController(
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message)
             } finally {
-                _state.value = _state.value.copy(busy = false)
+                _state.value = _state.value.copy(busy = false, progress = null)
             }
         }
     }
@@ -68,8 +92,10 @@ class SyncController(
         scope.launch {
             _state.value = _state.value.copy(busy = true, error = null)
             try {
-                runScan()
-                val mismatches = store.manifestAll().filter { m ->
+                runScan(progressListener())
+                val manifest = store.manifestAll()
+                val mismatches = manifest.filterIndexed { i, m ->
+                    _state.value = _state.value.copy(progress = ProgressState(SyncPhase.SCAN, i + 1, manifest.size, m.path))
                     m.sha256 != null && runCatching {
                         fs.openRead(m.path).use { com.musicsyncer.engine.Hashing.sha256(it) } == m.sha256
                     }.getOrDefault(false).not()
@@ -80,7 +106,7 @@ class SyncController(
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message)
             } finally {
-                _state.value = _state.value.copy(busy = false)
+                _state.value = _state.value.copy(busy = false, progress = null)
             }
         }
     }
