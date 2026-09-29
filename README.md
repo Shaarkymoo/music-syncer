@@ -20,6 +20,14 @@ Suggested aliases:
     alias msscan='python -m ms.cli scan --path "/media/shaarky/Data/Shaarav/my songs/"'
     alias msserve='python -m ms.cli serve --path "/media/shaarky/Data/Shaarav/my songs/"'
 
+## Lazy hashing
+
+Scans are metadata-only: the first scan records paths, sizes and mtimes without
+hashing file contents, so it is near-instant even on a large library. Files are
+verified (SHA-256) at transfer time or on demand via `ms verify`. Identical
+files present on both devices adopt the peer's checksum during sync, so no
+bytes are re-transferred.
+
 ## Status
 
 Engine + Linux daemon implemented. Android app (Plan 2) implemented — it ports
