@@ -13,6 +13,8 @@ from ms.progress import Progress
 
 PARTIAL_PREFIX = ".ms-partial-"
 SCHEMA_VERSION = 1
+# Keep in sync with android/app/build.gradle.kts versionName.
+APP_VERSION = "0.1.0"
 
 
 def _safe_join(root: Path, rel: str) -> Path | None:
@@ -25,11 +27,12 @@ def _safe_join(root: Path, rel: str) -> Path | None:
 
 class SyncServer:
     def __init__(self, root: Path, db_path: Path, device_id: str, schema_version: int = SCHEMA_VERSION,
-                 port: int = 0, progress: Progress | None = None):
+                 port: int = 0, progress: Progress | None = None, apk_path: str | None = None):
         self.root = root
         self.device_id = device_id
         self.schema_version = schema_version
         self._progress = progress
+        self.apk_path = apk_path
         # ThreadingHTTPServer serves each request on a worker thread; the
         # server's _lock serializes all DB access, so cross-thread use is safe.
         self._conn = db.init_db(db_path, check_same_thread=False)
@@ -86,6 +89,19 @@ class SyncServer:
                             return
                         data = target.read_bytes()
                         self.send_response(200)
+                        self.send_header("Content-Length", str(len(data)))
+                        self.end_headers()
+                        self.wfile.write(data)
+                    elif parsed.path == "/version":
+                        self._send_json({"version": APP_VERSION})
+                    elif parsed.path == "/apk":
+                        apk = Path(server.apk_path) if server.apk_path else None
+                        if apk is None or not apk.is_file():
+                            self._send_json({"error": "apk not available"}, 404)
+                            return
+                        data = apk.read_bytes()
+                        self.send_response(200)
+                        self.send_header("Content-Type", "application/vnd.android.package-archive")
                         self.send_header("Content-Length", str(len(data)))
                         self.end_headers()
                         self.wfile.write(data)

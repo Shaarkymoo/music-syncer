@@ -11,7 +11,7 @@ def _default_path() -> Path:
 
 def load_config(path: Path | None = None) -> dict:
     p = path or _default_path()
-    cfg: dict = {"base_path": None, "port": DEFAULT_PORT, "db_path": None}
+    cfg: dict = {"base_path": None, "port": DEFAULT_PORT, "db_path": None, "apk_path": None}
     if p.exists():
         with p.open("rb") as f:
             data = tomllib.load(f)
@@ -19,4 +19,6 @@ def load_config(path: Path | None = None) -> dict:
     if cfg["db_path"] is None:
         data_home = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
         cfg["db_path"] = str(data_home / "music-syncer.db")
+    if os.environ.get("MS_APK_PATH"):
+        cfg["apk_path"] = os.environ["MS_APK_PATH"]
     return cfg
