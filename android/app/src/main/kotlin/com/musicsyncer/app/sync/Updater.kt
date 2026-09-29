@@ -55,10 +55,16 @@ class Updater(private val context: Context) {
         } catch (e: Exception) {
             return Result.failure(e)
         }
+        val apkFile = File(context.cacheDir, "update.apk")
+        try {
+            withContext(Dispatchers.IO) {
+                apkFile.writeBytes(bytes)
+            }
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
         return withContext(Dispatchers.Main) {
             try {
-                val apkFile = File(context.cacheDir, "update.apk")
-                apkFile.writeBytes(bytes)
                 val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
                 val intent = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(uri, "application/vnd.android.package-archive")
