@@ -22,6 +22,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
 import com.musicsyncer.app.ui.BrowserScreen
+import com.musicsyncer.app.ui.EditorScreen
 import com.musicsyncer.app.ui.StatusScreen
 
 private enum class Screen { Status, Browser }
@@ -37,26 +38,31 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     var screen by rememberSaveable { mutableStateOf(Screen.Status) }
+                    var editRel by rememberSaveable { mutableStateOf<String?>(null) }
+                    val editing = editRel != null
                     Column(Modifier.fillMaxSize()) {
                         Box(Modifier.weight(1f)) {
-                            when (screen) {
-                                Screen.Status -> StatusScreen(vm)
-                                Screen.Browser -> BrowserScreen(vm, onEditSong = { /* Task 7: metadata editor */ })
+                            when {
+                                editing -> EditorScreen(vm, editRel!!, onClose = { editRel = null })
+                                screen == Screen.Status -> StatusScreen(vm)
+                                else -> BrowserScreen(vm, onEditSong = { editRel = it })
                             }
                         }
-                        NavigationBar {
-                            NavigationBarItem(
-                                selected = screen == Screen.Status,
-                                onClick = { screen = Screen.Status },
-                                icon = { Icon(Icons.Filled.Home, contentDescription = null) },
-                                label = { Text("Status") },
-                            )
-                            NavigationBarItem(
-                                selected = screen == Screen.Browser,
-                                onClick = { screen = Screen.Browser },
-                                icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
-                                label = { Text("Browse") },
-                            )
+                        if (!editing) {
+                            NavigationBar {
+                                NavigationBarItem(
+                                    selected = screen == Screen.Status,
+                                    onClick = { screen = Screen.Status },
+                                    icon = { Icon(Icons.Filled.Home, contentDescription = null) },
+                                    label = { Text("Status") },
+                                )
+                                NavigationBarItem(
+                                    selected = screen == Screen.Browser,
+                                    onClick = { screen = Screen.Browser },
+                                    icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
+                                    label = { Text("Browse") },
+                                )
+                            }
                         }
                     }
                 }
