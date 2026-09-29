@@ -48,7 +48,11 @@ class SafFs(private val context: Context, treeUri: Uri) : Fs {
 
     override fun write(rel: String, data: ByteArray) {
         mkdirs(rel.substringBeforeLast('/', ""))
-        resolver.openOutputStream(uri(rel), "wt")!!.use { it.write(data) }
+        val parentRel = rel.substringBeforeLast('/', "")
+        val parent = if (parentRel.isEmpty()) root else doc(parentRel) ?: throw IOException("parent not found: $parentRel")
+        val target = doc(rel) ?: parent.createFile("application/octet-stream", rel.substringAfterLast('/'))
+            ?: throw IOException("create failed: $rel")
+        resolver.openOutputStream(target.uri, "wt")!!.use { it.write(data) }
     }
 
     override fun mkdirs(relDir: String) {
