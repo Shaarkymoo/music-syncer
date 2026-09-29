@@ -32,7 +32,7 @@ data class HandshakeResp(
     @SerializedName("client_cursor") val clientCursor: Long,
 )
 data class ManifestWire(val path: String, val size: Long, val mtimeNs: Long, val sha256: String?)
-data class ConflictWire(val path: String, val tsNs: Long, val sha256: String)
+data class ConflictWire(val path: String, val tsNs: Long, val sha256: String?)
 data class SyncRequest(
     @SerializedName("device_id") val deviceId: String,
     @SerializedName("server_cursor") val serverCursor: Long,
@@ -81,7 +81,7 @@ private object ConflictWireAdapter : JsonSerializer<ConflictWire>, JsonDeseriali
         JsonArray().apply {
             add(JsonPrimitive(src.path))
             add(JsonPrimitive(src.tsNs))
-            add(JsonPrimitive(src.sha256))
+            add(src.sha256?.let { JsonPrimitive(it) } ?: JsonNull.INSTANCE)
         }
 
     override fun deserialize(json: JsonElement, typeOfT: Type, context: JsonDeserializationContext): ConflictWire {
@@ -89,7 +89,7 @@ private object ConflictWireAdapter : JsonSerializer<ConflictWire>, JsonDeseriali
         return ConflictWire(
             path = arr[0].asString,
             tsNs = (arr[1] as JsonPrimitive).asLong,
-            sha256 = arr[2].asString,
+            sha256 = if (arr[2].isJsonNull) null else arr[2].asString,
         )
     }
 }

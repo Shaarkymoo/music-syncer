@@ -39,7 +39,7 @@ fun applyPlan(
 
     // --- fetches (writes) ---
     for ((rel, _size, sha) in plan.fetch.sortedBy { it.first }) {
-        val srcRel = localShaToPath[sha]
+        val srcRel = sha?.let { localShaToPath[it] }
         if (srcRel == rel && fs.exists(rel)) continue  // already applied: no-op
         if (srcRel != null && srcRel != rel) {
             if (fs.exists(srcRel)) {  // content-addressed copy: no transfer
@@ -55,15 +55,16 @@ fun applyPlan(
             }
         }
         val data = fetchBytes(rel)
-        if (Hashing.sha256(data) != sha) throw IllegalArgumentException("sha256 mismatch after transfer: $rel")
+        val receivedSha = Hashing.sha256(data)
+        if (sha != null && receivedSha != sha) throw IllegalArgumentException("sha256 mismatch after transfer: $rel")
         fs.mkdirs(rel.substringBeforeLast('/', ""))
         val tmp = partialName(rel)
         fs.write(tmp, data)
         fs.rename(tmp, rel)
         summary.fetched.add(rel)
         val entry = fs.stat(rel)
-        store.journalAppend(remoteOps[rel] ?: "CREATE", rel, data.size.toLong(), sha, nowNs, remoteDevice)
-        store.manifestUpsert(rel, data.size.toLong(), entry.mtimeNs, sha, nowNs)
+        store.journalAppend(remoteOps[rel] ?: "CREATE", rel, data.size.toLong(), receivedSha, nowNs, remoteDevice)
+        store.manifestUpsert(rel, data.size.toLong(), entry.mtimeNs, receivedSha, nowNs)
     }
 
     // --- deletes last ---

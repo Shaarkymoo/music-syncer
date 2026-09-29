@@ -74,7 +74,7 @@ class JvmServer(
                             val expected = params["sha"] ?: ""
                             if (rel.isBlank()) { err(exchange, 400, """{"ok":false,"error":"empty path"}"""); return@createContext }
                             val body = exchange.requestBody.readBytes()
-                            if (Hashing.sha256(body) != expected) { err(exchange, 400, """{"ok":false,"error":"sha256 mismatch"}"""); return@createContext }
+                            if (expected.isNotEmpty() && Hashing.sha256(body) != expected) { err(exchange, 400, """{"ok":false,"error":"sha256 mismatch"}"""); return@createContext }
                             // Random-token partial in the target's OWN directory (Python parity):
                             // a fixed ".ms-partial-x-$rel" name would create a dot-DIRECTORY for
                             // nested rels that scan never cleans, and collides under concurrency.
@@ -97,6 +97,8 @@ class JvmServer(
                     "/sync" -> {
                         val req = GsonHolder.gson.fromJson(exchange.requestBody.reader(StandardCharsets.UTF_8), SyncRequest::class.java)
                         scan(fs, store, deviceId, System.currentTimeMillis() * 1_000_000)
+                        val clientManifest = req.manifest.associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) }
+                        adoptShas(store, clientManifest, fs, System.currentTimeMillis() * 1_000_000)
                         val serverOps = store.journalSince(req.serverCursor)
                         val serverManifest = store.manifestAll().map { ManifestWire(it.path, it.size, it.mtimeNs, it.sha256) }
                         ok(exchange, GsonHolder.gson.toJson(SyncResponse(schemaVersion, serverOps, serverManifest, emptyList(), store.journalHead())))

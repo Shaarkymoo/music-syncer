@@ -61,4 +61,23 @@ class MergeTest {
         assertEquals(listOf(Triple("A.mp3", 10L, "local")), plan.push)
         assertEquals(true, plan.fetch.isEmpty() && plan.conflictLoser.isEmpty())
     }
+
+    @Test fun nullLocalShaSameSizeIsIdentical() {
+        // local has NULL sha, remote has sha, sizes match -> no fetch, no conflict
+        val plan = buildPlan(mapOf("A.mp3" to Triple(10L, 5L, null)), emptyList(), m("A.mp3", "remotesha"), emptyList(), 0, "me")
+        assertEquals(true, plan.fetch.isEmpty() && plan.push.isEmpty() && plan.delete.isEmpty())
+    }
+
+    @Test fun nullLocalShaDifferentSizeIsChange() {
+        val plan = buildPlan(mapOf("A.mp3" to Triple(10L, 5L, null)), emptyList(), m("A.mp3", "remotesha", size = 20), emptyList(), 0, "me")
+        assertEquals(true, plan.fetch.isNotEmpty() || plan.push.isNotEmpty() || plan.delete.isNotEmpty())
+    }
+
+    @Test fun bothNullShaDifferentSizeIsChange() {
+        // both sides lazy-scanned but sizes differ -> real change (LWW), not identical
+        val local = listOf(op(1, "MODIFY", "A.mp3", "me", 100))
+        val remote = listOf(op(1, "MODIFY", "A.mp3", "phone", 200))
+        val plan = buildPlan(mapOf("A.mp3" to Triple(10L, 5L, null)), local, mapOf("A.mp3" to Triple(20L, 5L, null)), remote, 0, "me")
+        assertEquals(true, plan.fetch.isNotEmpty() || plan.push.isNotEmpty() || plan.delete.isNotEmpty())
+    }
 }

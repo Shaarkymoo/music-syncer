@@ -11,15 +11,13 @@ fun scan(fs: Fs, store: SyncStore, deviceId: String, nowNs: Long): Long {
         val e = disk.getValue(rel)
         val row = store.manifestGet(rel)
         if (row == null) {
-            val sha = fs.openRead(rel).use { Hashing.sha256(it) }
-            store.journalAppend("CREATE", rel, e.size, sha, nowNs, deviceId)
-            store.manifestUpsert(rel, e.size, e.mtimeNs, sha, nowNs)
+            store.journalAppend("CREATE", rel, e.size, null, nowNs, deviceId)
+            store.manifestUpsert(rel, e.size, e.mtimeNs, null, nowNs)
         } else if (row.size == e.size && row.mtimeNs == e.mtimeNs) {
             // unchanged
         } else {
-            val sha = fs.openRead(rel).use { Hashing.sha256(it) }
-            if (sha != row.sha256) store.journalAppend("MODIFY", rel, e.size, sha, nowNs, deviceId)
-            store.manifestUpsert(rel, e.size, e.mtimeNs, sha, nowNs)
+            store.journalAppend("MODIFY", rel, e.size, null, nowNs, deviceId)
+            store.manifestUpsert(rel, e.size, e.mtimeNs, null, nowNs)
         }
     }
     for (m in store.manifestAll()) {

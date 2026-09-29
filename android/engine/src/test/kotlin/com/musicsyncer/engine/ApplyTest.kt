@@ -32,6 +32,15 @@ class ApplyTest {
         assertEquals(false, Files.exists(dir.resolve("A.mp3")))
     }
 
+    @Test fun nullShaFetchStoresReceivedHash() {
+        // Lazy source: fetch carries sha=null; the received hash is stored, no raise.
+        val plan = Plan(fetch = mutableListOf(Triple("A.mp3", 4L, null)))
+        val summary = applyPlan(fs(), store(), plan, "me", "phone", mapOf("A.mp3" to "CREATE"), 1000) { "abcd".encodeToByteArray() }
+        assertEquals("abcd", Files.readString(dir.resolve("A.mp3")))
+        assertEquals(listOf("A.mp3"), summary.fetched)
+        assertEquals(Hashing.sha256("abcd".encodeToByteArray()), store().manifestGet("A.mp3")?.sha256)
+    }
+
     @Test fun contentAddressedCopy() {
         Files.createDirectories(dir.resolve("Old"))
         Files.write(dir.resolve("Old/song.mp3"), "same-content".encodeToByteArray())

@@ -136,6 +136,11 @@ class SyncIntegrationTest {
             Files.createDirectories(p.rootA.resolve("Fav"))
             Files.move(p.rootA.resolve("Rock/Song.mp3"), p.rootA.resolve("Fav/Song.mp3"))
             scan(PathFs(p.rootA), p.serverStore, "laptop", 2)
+            // The laptop's library is hashed: fill the moved file's sha (the lazy
+            // scan leaves it NULL, and the content-addressed copy path needs a
+            // non-null sha). Mirrors the Python test's hashed-laptop scenario.
+            val row = p.serverStore.manifestGet("Fav/Song.mp3")!!
+            p.serverStore.manifestUpsert("Fav/Song.mp3", row.size, row.mtimeNs, Hashing.sha256(Files.readAllBytes(p.rootA.resolve("Fav/Song.mp3"))), 2)
             val count = AtomicInteger(0)
             val store = clientStore()
             // count GET /file calls by wrapping the fetch in runSyncSession? Instead:
@@ -147,6 +152,25 @@ class SyncIntegrationTest {
             assertEquals("same-content", Files.readString(p.rootB.resolve("Fav/Song.mp3")))
             assertEquals(false, Files.exists(p.rootB.resolve("Rock/Song.mp3")))
             assertEquals(listOf("Fav/Song.mp3"), summary.copied)
+        } finally { p.srv.stop() }
+    }
+
+    @Test fun identicalTreesSyncWithZeroTransfer() {
+        val p = pair()
+        try {
+            // Seed BOTH sides with the SAME file (simulating "same library on both").
+            Files.createDirectories(p.rootA.resolve("Rock"))
+            Files.write(p.rootA.resolve("Rock/A.mp3"), "same-content".encodeToByteArray())
+            Files.createDirectories(p.rootB.resolve("Rock"))
+            Files.write(p.rootB.resolve("Rock/A.mp3"), "same-content".encodeToByteArray())
+            // Laptop has a hashed library (real sha in its manifest — e.g. from a
+            // previous sync/verify); the phone scans lazily (NULL sha).
+            scan(PathFs(p.rootA), p.serverStore, "laptop", 1)
+            val row = p.serverStore.manifestGet("Rock/A.mp3")!!
+            p.serverStore.manifestUpsert("Rock/A.mp3", row.size, row.mtimeNs, Hashing.sha256(Files.readAllBytes(p.rootA.resolve("Rock/A.mp3"))), 1)
+            val s = sync(p)
+            assertEquals(true, s.fetched.isEmpty() && s.pushed.isEmpty())  // zero transfer
+            assertEquals(true, clientStore().manifestGet("Rock/A.mp3")?.sha256 != null)  // sha adopted
         } finally { p.srv.stop() }
     }
 

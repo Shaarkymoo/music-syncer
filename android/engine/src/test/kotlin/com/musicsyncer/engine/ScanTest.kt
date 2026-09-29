@@ -22,7 +22,21 @@ class ScanTest {
         val ops = s.journalSince(0)
         assertEquals(listOf("CREATE"), ops.map { it.op })
         assertEquals("Rock/A.mp3", ops[0].path)
-        assertEquals(true, s.manifestGet("Rock/A.mp3")?.sha256 != null)
+        assertEquals(null, s.manifestGet("Rock/A.mp3")?.sha256)  // lazy: no hash
+    }
+
+    @Test
+    fun modifyIsLazy() {
+        Files.createDirectories(dir.resolve("root"))
+        val p = dir.resolve("root/A.mp3")
+        Files.write(p, byteArrayOf(1))
+        val s = store()
+        scan(fs(), s, "laptop", 1000)
+        Files.write(p, byteArrayOf(2, 3))  // size change -> MODIFY
+        scan(fs(), s, "laptop", 2000)
+        val ops = s.journalSince(1)
+        assertEquals(listOf("MODIFY"), ops.map { it.op })
+        assertEquals(null, ops[0].sha256)  // lazy: no hash
     }
 
     @Test

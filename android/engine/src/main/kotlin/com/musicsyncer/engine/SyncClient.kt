@@ -58,7 +58,7 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
     scan(fs, store, ourDevice, nowNs)
     val ourCursor = store.syncStateGet(serverDevice)?.lastSeenJournalId ?: 0L  // what we've seen of server
     val ourOps = store.journalSince(serverCursorForUs)
-    val ourManifest = store.manifestAll().associate { it.path to Triple(it.size, it.mtimeNs, it.sha256 ?: "") }
+    var ourManifest = store.manifestAll().associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) }
 
     // 3. Submit state; receive server journal + manifest.
     val req = SyncRequest(
@@ -72,7 +72,12 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
         SyncResponse::class.java,
     )
     val serverOps = resp.serverJournalOps
-    val serverManifest = resp.serverManifest.associate { it.path to Triple(it.size, it.mtimeNs, it.sha256 ?: "") }
+    val serverManifest = resp.serverManifest.associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) }
+
+    // 3.5. Adopt server shas for identical local files (no transfer, no hashing),
+    //      then refresh our manifest so both plans see the adopted shas.
+    adoptShas(store, serverManifest, fs, nowNs)
+    ourManifest = store.manifestAll().associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) }
 
     // 4. OUR plan: peer_cursor = how much of OUR journal the server has seen.
     val plan = buildPlan(ourManifest, ourOps, serverManifest, serverOps, serverCursorForUs, ourDevice)
@@ -86,7 +91,8 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
     val pushed = mutableListOf<String>()
     for ((rel, _size, sha) in serverPlan.fetch) {
         val data = fs.read(rel)
-        httpBytes(client, "$serverUrl/file?path=${URLEncoder.encode(rel, "UTF-8")}&sha=$sha", "POST", data)
+        val url = "$serverUrl/file?path=${URLEncoder.encode(rel, "UTF-8")}" + if (sha != null) "&sha=$sha" else ""
+        httpBytes(client, url, "POST", data)
         pushed.add(rel)
     }
 
