@@ -1,0 +1,87 @@
+package com.musicsyncer.app.fs
+
+import android.content.Context
+import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
+import com.musicsyncer.engine.Fs
+import com.musicsyncer.engine.FsEntry
+import java.io.IOException
+import java.io.InputStream
+
+class SafFs(private val context: Context, treeUri: Uri) : Fs {
+    private val resolver = context.contentResolver
+    private val root: DocumentFile = DocumentFile.fromTreeUri(context, treeUri)
+        ?: throw IllegalArgumentException("not a SAF tree: $treeUri")
+
+    private fun doc(rel: String): DocumentFile? {
+        var current = root
+        for (part in rel.split('/')) {
+            if (part.isEmpty()) continue
+            current = current.findFile(part) ?: return null
+        }
+        return current
+    }
+
+    override fun list(): List<FsEntry> {
+        val out = mutableListOf<FsEntry>()
+        fun walk(dir: DocumentFile, prefix: String) {
+            for (child in dir.listFiles()) {
+                val rel = if (prefix.isEmpty()) child.name ?: continue else "$prefix/${child.name}"
+                if (child.isFile) {
+                    out.add(FsEntry(rel, child.length(), child.lastModified() * 1_000_000))
+                } else if (child.isDirectory) {
+                    walk(child, rel)
+                }
+            }
+        }
+        walk(root, "")
+        return out
+    }
+
+    override fun stat(rel: String): FsEntry {
+        val d = doc(rel) ?: throw IOException("not found: $rel")
+        return FsEntry(rel, d.length(), d.lastModified() * 1_000_000)
+    }
+
+    override fun read(rel: String): ByteArray = resolver.openInputStream(uri(rel))!!.use { it.readBytes() }
+    override fun openRead(rel: String): InputStream = resolver.openInputStream(uri(rel))!!
+
+    override fun write(rel: String, data: ByteArray) {
+        mkdirs(rel.substringBeforeLast('/', ""))
+        resolver.openOutputStream(uri(rel), "wt")!!.use { it.write(data) }
+    }
+
+    override fun mkdirs(relDir: String) {
+        if (relDir.isEmpty()) return
+        var current = root
+        for (part in relDir.split('/')) {
+            if (part.isEmpty()) continue
+            current = current.findFile(part) ?: current.createDirectory(part) ?: throw IOException("mkdir failed: $part")
+        }
+    }
+
+    override fun delete(rel: String) {
+        doc(rel)?.delete()
+    }
+
+    override fun rename(rel: String, newRel: String) {
+        val target = doc(rel) ?: throw IOException("not found: $rel")
+        val targetParent = rel.substringBeforeLast('/', "")
+        val newParent = newRel.substringBeforeLast('/', "")
+        val newName = newRel.substringAfterLast('/')
+        require(targetParent == newParent) { "SAF rename must stay in the same directory: $rel -> $newRel" }
+        if (!target.renameTo(newName)) {
+            // Fallback: copy + delete.
+            val bytes = read(rel)
+            write(newRel, bytes)
+            delete(rel)
+        }
+    }
+
+    override fun exists(rel: String): Boolean = doc(rel) != null
+
+    private fun uri(rel: String): Uri {
+        val d = doc(rel) ?: throw IOException("not found: $rel")
+        return d.uri
+    }
+}
