@@ -168,6 +168,34 @@ def test_identical_trees_sync_with_zero_transfer(pair, tmp_path):
     conn.close()
 
 
+def test_same_size_modify_propagates(pair, tmp_path):
+    root_a, root_b, srv = pair
+    (root_a / "Rock").mkdir()
+    (root_a / "Rock" / "A.mp3").write_bytes(b"content-a")
+    (root_b / "Rock").mkdir()
+    (root_b / "Rock" / "A.mp3").write_bytes(b"content-a")
+    # Both libraries hashed (real shas in both manifests — hashed-phone scenario).
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    row = db.manifest_get(srv._conn, "Rock/A.mp3")
+    db.manifest_upsert(srv._conn, "Rock/A.mp3", row[0], row[1],
+                       sha256_file(root_a / "Rock" / "A.mp3"), 1)
+    db_path = _client_scan(root_b, tmp_path)
+    conn = db.init_db(db_path)
+    row = db.manifest_get(conn, "Rock/A.mp3")
+    db.manifest_upsert(conn, "Rock/A.mp3", row[0], row[1],
+                       sha256_file(root_b / "Rock" / "A.mp3"), 1)
+    conn.close()
+    # Laptop rewrites to DIFFERENT content of the SAME byte size; the lazy scan
+    # journals a MODIFY with NULL sha.
+    (root_a / "Rock" / "A.mp3").write_bytes(b"content-b")
+    scan.scan(root_a, srv._conn, "laptop", 2)
+    s = _sync(root_b, db_path, srv, tmp_path)
+    assert s["fetched"] == ["Rock/A.mp3"]          # the MODIFY propagated
+    assert (root_b / "Rock" / "A.mp3").read_bytes() == b"content-b"
+    # The laptop's manifest sha was NOT poisoned with the phone's stale sha.
+    assert db.manifest_get(srv._conn, "Rock/A.mp3")[2] is None
+
+
 def test_second_sync_is_noop(pair, tmp_path):
     root_a, root_b, srv = pair
     (root_a / "A.mp3").write_bytes(b"x")

@@ -1,9 +1,14 @@
 package com.musicsyncer.engine
 
+import java.nio.file.Files
+import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
 
 class MergeTest {
+    @TempDir lateinit var dir: Path
+
     private fun m(path: String, sha: String, size: Long = 10, mtime: Long = 5) =
         mapOf(path to Triple(size, mtime, sha))
 
@@ -79,5 +84,35 @@ class MergeTest {
         val remote = listOf(op(1, "MODIFY", "A.mp3", "phone", 200))
         val plan = buildPlan(mapOf("A.mp3" to Triple(10L, 5L, null)), local, mapOf("A.mp3" to Triple(20L, 5L, null)), remote, 0, "me")
         assertEquals(true, plan.fetch.isNotEmpty() || plan.push.isNotEmpty() || plan.delete.isNotEmpty())
+    }
+
+    @Test fun nullLocalShaSameSizeWithUnseenModifyIsChange() {
+        // local has NULL sha, remote has sha, sizes match — but an unseen local
+        // MODIFY means the local file was rewritten: NOT identical, local wins.
+        val local = listOf(op(6, "MODIFY", "A.mp3", "me", 200))
+        val plan = buildPlan(mapOf("A.mp3" to Triple(10L, 5L, null)), local, m("A.mp3", "remotesha"), emptyList(), 5, "me")
+        assertEquals(listOf(Triple("A.mp3", 10L, null)), plan.push)
+    }
+
+    @Test fun nullLocalShaSameSizeWithSeenModifyIsIdentical() {
+        // Peer already saw our MODIFY (cursor 6): identical-trees behavior preserved.
+        val local = listOf(op(6, "MODIFY", "A.mp3", "me", 200))
+        val plan = buildPlan(mapOf("A.mp3" to Triple(10L, 5L, null)), local, m("A.mp3", "remotesha"), emptyList(), 6, "me")
+        assertEquals(true, plan.fetch.isEmpty() && plan.push.isEmpty() && plan.delete.isEmpty())
+    }
+
+    @Test fun adoptShasSkipsRecentlyModified() {
+        val root = dir.resolve("root"); Files.createDirectories(root)
+        Files.write(root.resolve("A.mp3"), "content-a".encodeToByteArray())
+        val store = JdbcStore("jdbc:sqlite:${dir.resolve("adopt.db")}")
+        store.manifestUpsert("A.mp3", 9, 1, null, 1)  // lazy scan: NULL sha
+        val remote = mapOf("A.mp3" to Triple(9L, 1L, "remotesha"))
+        assertEquals(listOf("A.mp3"), adoptShas(store, remote, PathFs(root), 2))
+        assertEquals("remotesha", store.manifestGet("A.mp3")?.sha256)
+        // Same-size local MODIFY unseen by the peer: adoption must be skipped so
+        // the stale remote sha cannot freeze the rewrite into permanent divergence.
+        store.manifestUpsert("A.mp3", 9, 3, null, 3)
+        assertEquals(emptyList<String>(), adoptShas(store, remote, PathFs(root), 4, setOf("A.mp3")))
+        assertEquals(null, store.manifestGet("A.mp3")?.sha256)
     }
 }

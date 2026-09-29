@@ -43,7 +43,11 @@ def build_plan(local_manifest: dict, local_journal: list[dict],
             continue  # both sides have the same known sha
         else:  # both sides have different content (or unknown)
             if local_sha[path] is None and local_manifest[path][0] == size:
-                continue  # local never hashed, sizes match: identical; adoption fills the sha
+                unseen_local_modify = any(
+                    op["id"] > peer_cursor and op["op"] == "MODIFY" and op["device"] == our_device
+                    for op in ops_by_path.get(path, []))
+                if not unseen_local_modify:
+                    continue  # local never hashed, sizes match: identical; adoption fills the sha
             local_ts = local_latest[path]["ts_ns"] if path in local_latest else 0
             remote_ts = remote_latest[path]["ts_ns"] if path in remote_latest else 0
             if local_ts > remote_ts:  # local wins; remote must take ours

@@ -99,3 +99,39 @@ def test_both_null_sha_different_size_is_change():
     plan = build_plan({"A.mp3": (10, 5, None)}, local_journal,
                       {"A.mp3": (20, 5, None)}, remote_journal, 0, "me")
     assert plan.fetch == [("A.mp3", 20, None)] or plan.push or plan.delete
+
+
+def test_null_local_sha_same_size_with_unseen_modify_is_change():
+    # local has NULL sha, remote has sha, sizes match — but an unseen local
+    # MODIFY means the local file was rewritten: NOT identical, local wins.
+    local_journal = [{"id": 6, "op": "MODIFY", "path": "A.mp3", "size": 10,
+                      "sha256": None, "ts_ns": 200, "device": "me"}]
+    plan = build_plan({"A.mp3": (10, 5, None)}, local_journal,
+                      {"A.mp3": (10, 5, "remotesha")}, [], 5, "me")
+    assert plan.push == [("A.mp3", 10, None)]
+
+
+def test_null_local_sha_same_size_with_seen_modify_is_identical():
+    # Peer already saw our MODIFY (cursor 6): identical-trees behavior preserved.
+    local_journal = [{"id": 6, "op": "MODIFY", "path": "A.mp3", "size": 10,
+                      "sha256": None, "ts_ns": 200, "device": "me"}]
+    plan = build_plan({"A.mp3": (10, 5, None)}, local_journal,
+                      {"A.mp3": (10, 5, "remotesha")}, [], 6, "me")
+    assert plan.fetch == [] and plan.push == [] and plan.delete == []
+
+
+def test_adopt_shas_skips_recently_modified(tmp_path):
+    from ms import adopt, db
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "A.mp3").write_bytes(b"content-a")
+    conn = db.init_db(tmp_path / "t.db")
+    db.manifest_upsert(conn, "A.mp3", 9, 1, None, 1)  # lazy scan: NULL sha
+    remote = {"A.mp3": (9, 1, "remotesha")}
+    assert adopt.adopt_shas(conn, remote, root, 2) == ["A.mp3"]
+    assert db.manifest_get(conn, "A.mp3")[2] == "remotesha"
+    # Same-size local MODIFY unseen by the peer: adoption must be skipped so the
+    # stale remote sha cannot freeze the rewrite into permanent divergence.
+    db.manifest_upsert(conn, "A.mp3", 9, 3, None, 3)
+    assert adopt.adopt_shas(conn, remote, root, 4, {"A.mp3"}) == []
+    assert db.manifest_get(conn, "A.mp3")[2] is None

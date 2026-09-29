@@ -40,7 +40,10 @@ fun buildPlan(
             continue  // both sides have the same known sha
         } else {  // both sides have different content (or unknown)
             if (localSha[path] == null && localManifest.getValue(path).first == size) {
-                continue  // local never hashed, sizes match: identical; adoption fills the sha
+                val unseenLocalModify = opsByPath[path].orEmpty().any {
+                    it.id > peerCursor && it.op == "MODIFY" && it.device == ourDevice
+                }
+                if (!unseenLocalModify) continue  // local never hashed, sizes match: identical; adoption fills the sha
             }
             val localTs = localLatest[path]?.tsNs ?: 0L
             val remoteTs = remoteLatest[path]?.tsNs ?: 0L

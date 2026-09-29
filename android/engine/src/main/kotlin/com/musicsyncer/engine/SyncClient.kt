@@ -83,7 +83,10 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
 
     // 3.5. Adopt server shas for identical local files (no transfer, no hashing),
     //      then refresh our manifest so both plans see the adopted shas.
-    adoptShas(store, serverManifest, fs, nowNs)
+    //      Paths with an unseen local MODIFY are skipped: a same-size rewrite
+    //      must not be frozen to the server's stale sha.
+    val recentlyModified = ourOps.filter { it.op == "MODIFY" && it.device == ourDevice }.map { it.path }.toSet()
+    adoptShas(store, serverManifest, fs, nowNs, recentlyModified)
     ourManifest = store.manifestAll().associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) }
 
     // 4. OUR plan: peer_cursor = how much of OUR journal the server has seen.

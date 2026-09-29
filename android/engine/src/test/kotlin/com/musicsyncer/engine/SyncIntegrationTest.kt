@@ -174,6 +174,33 @@ class SyncIntegrationTest {
         } finally { p.srv.stop() }
     }
 
+    @Test fun sameSizeModifyPropagates() {
+        val p = pair()
+        try {
+            Files.createDirectories(p.rootA.resolve("Rock"))
+            Files.write(p.rootA.resolve("Rock/A.mp3"), "content-a".encodeToByteArray())
+            Files.createDirectories(p.rootB.resolve("Rock"))
+            Files.write(p.rootB.resolve("Rock/A.mp3"), "content-a".encodeToByteArray())
+            // Both libraries hashed (real shas in both manifests — hashed-phone scenario).
+            scan(PathFs(p.rootA), p.serverStore, "laptop", 1)
+            val srow = p.serverStore.manifestGet("Rock/A.mp3")!!
+            p.serverStore.manifestUpsert("Rock/A.mp3", srow.size, srow.mtimeNs, Hashing.sha256(Files.readAllBytes(p.rootA.resolve("Rock/A.mp3"))), 1)
+            val store = clientStore()
+            scan(PathFs(p.rootB), store, "phone", 1)
+            val crow = store.manifestGet("Rock/A.mp3")!!
+            store.manifestUpsert("Rock/A.mp3", crow.size, crow.mtimeNs, Hashing.sha256(Files.readAllBytes(p.rootB.resolve("Rock/A.mp3"))), 1)
+            // Laptop rewrites to DIFFERENT content of the SAME byte size; the lazy
+            // scan journals a MODIFY with NULL sha.
+            Files.write(p.rootA.resolve("Rock/A.mp3"), "content-b".encodeToByteArray())
+            scan(PathFs(p.rootA), p.serverStore, "laptop", 2)
+            val s = runSyncSession("http://127.0.0.1:${p.srv.port}", PathFs(p.rootB), store, "phone")
+            assertEquals(listOf("Rock/A.mp3"), s.fetched)  // the MODIFY propagated
+            assertEquals("content-b", Files.readString(p.rootB.resolve("Rock/A.mp3")))
+            // The laptop's manifest sha was NOT poisoned with the phone's stale sha.
+            assertEquals(null, p.serverStore.manifestGet("Rock/A.mp3")?.sha256)
+        } finally { p.srv.stop() }
+    }
+
     @Test fun secondSyncIsNoop() {
         val p = pair()
         try {

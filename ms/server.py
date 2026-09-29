@@ -106,12 +106,19 @@ class SyncServer:
                             scan_mod.scan(server.root, server._conn, server.device_id,
                                           time.time_ns(), progress=server._progress)
                             client_manifest = {p: (s, m, h) for (p, s, m, h) in req.get("manifest", [])}
-                            adopt.adopt_shas(server._conn, client_manifest, Path(server.root), time.time_ns())
+                            # Ops the client has NOT seen yet; paths with an unseen
+                            # local MODIFY must not adopt the client's stale sha.
+                            server_ops_since_client_cursor = db.journal_since(
+                                server._conn, req.get("server_cursor", 0))
+                            recently_modified = {op["path"] for op in server_ops_since_client_cursor
+                                                 if op["op"] == "MODIFY" and op["device"] == server.device_id}
+                            adopt.adopt_shas(server._conn, client_manifest, Path(server.root),
+                                             time.time_ns(), recently_modified)
                             server._sessions[req["device_id"]] = {
                                 "journal_ops": req.get("journal_ops", []),
                                 "manifest": req.get("manifest", []),
                             }
-                            server_journal_ops = db.journal_since(server._conn, req.get("server_cursor", 0))
+                            server_journal_ops = server_ops_since_client_cursor
                             server_manifest = [[p, s, m, h] for (p, s, m, h, _l) in db.manifest_all(server._conn)]
                             head = db.journal_head(server._conn)
                         self._send_json({

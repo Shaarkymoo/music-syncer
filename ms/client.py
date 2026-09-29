@@ -64,7 +64,11 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
 
     # 3.5. Adopt server shas for identical local files (no transfer, no hashing),
     #      then refresh our manifest so both plans see the adopted shas.
-    adopt.adopt_shas(conn, server_manifest, root, now_ns)
+    #      Paths with an unseen local MODIFY are skipped: a same-size rewrite
+    #      must not be frozen to the server's stale sha.
+    recently_modified = {op["path"] for op in our_ops
+                         if op["op"] == "MODIFY" and op["device"] == our_device}
+    adopt.adopt_shas(conn, server_manifest, root, now_ns, recently_modified)
     our_manifest = {p: (s, m, h) for (p, s, m, h, _l) in db.manifest_all(conn)}
 
     # 4. OUR plan: what we must fetch / delete / conflict-preserve.

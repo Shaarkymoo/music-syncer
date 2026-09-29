@@ -99,8 +99,12 @@ class JvmServer(
                         val req = GsonHolder.gson.fromJson(exchange.requestBody.reader(StandardCharsets.UTF_8), SyncRequest::class.java)
                         scan(fs, store, deviceId, System.currentTimeMillis() * 1_000_000, progress)
                         val clientManifest = req.manifest.associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) }
-                        adoptShas(store, clientManifest, fs, System.currentTimeMillis() * 1_000_000)
-                        val serverOps = store.journalSince(req.serverCursor)
+                        // Ops the client has NOT seen yet; paths with an unseen
+                        // local MODIFY must not adopt the client's stale sha.
+                        val serverOpsSinceClientCursor = store.journalSince(req.serverCursor)
+                        val recentlyModified = serverOpsSinceClientCursor.filter { it.op == "MODIFY" && it.device == deviceId }.map { it.path }.toSet()
+                        adoptShas(store, clientManifest, fs, System.currentTimeMillis() * 1_000_000, recentlyModified)
+                        val serverOps = serverOpsSinceClientCursor
                         val serverManifest = store.manifestAll().map { ManifestWire(it.path, it.size, it.mtimeNs, it.sha256) }
                         ok(exchange, GsonHolder.gson.toJson(SyncResponse(schemaVersion, serverOps, serverManifest, emptyList(), store.journalHead())))
                     }
