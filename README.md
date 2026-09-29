@@ -22,5 +22,19 @@ Suggested aliases:
 
 ## Status
 
-Engine + Linux daemon implemented. Android app (Plan 2) pending — it ports the
-same engine semantics (scan → journal → merge → apply) over mDNS + HTTP.
+Engine + Linux daemon implemented. Android app (Plan 2) implemented — it ports
+the same engine semantics (scan → journal → merge → apply) over mDNS + HTTP.
+
+## Android app
+
+Build the APK:
+
+    cd android && JAVA_HOME=$HOME/.local/share/jdks/jdk-21.0.12.1+1 ./gradlew :app:assembleDebug
+
+Install on the phone (USB debugging enabled, phone connected):
+
+    adb install android/app/build/outputs/apk/debug/app-debug.apk
+
+First run: tap "Choose music folder" and pick the music folder (e.g. `/sdcard/Music`).
+Then: start the laptop daemon (`msserve`), tap "Find laptop & sync". Subsequent syncs:
+make changes, tap Scan, then Sync.
