@@ -8,12 +8,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
@@ -21,14 +23,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.musicsyncer.app.BuildConfig
 import com.musicsyncer.app.MusicViewModel
 import com.musicsyncer.app.sync.ProgressState
 import com.musicsyncer.app.sync.SyncState
+import com.musicsyncer.app.sync.Updater
 import com.musicsyncer.app.sync.displayName
+import com.musicsyncer.app.sync.isNewerVersion
 import kotlinx.coroutines.launch
 
 @Composable
@@ -37,7 +44,12 @@ fun StatusScreen(vm: MusicViewModel) {
         if (uri != null) vm.pickFolder(uri, android.net.Uri.decode(uri.lastPathSegment ?: "music"))
     }
     val scope = rememberCoroutineScope()
-    val state by vm.controller?.state?.collectAsState() ?: rememberStableState()
+    val controller = vm.controller
+    val state by controller?.state?.collectAsState() ?: rememberStableState()
+    val context = LocalContext.current
+    val updater = remember { Updater(context) }
+    var updateMsg by remember { mutableStateOf<String?>(null) }
+    var pendingVersion by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Music Sync")
         vm.folderName?.let { Text("Folder: $it") } ?: Button(onClick = { picker.launch(null) }) { Text("Choose music folder") }
@@ -55,6 +67,37 @@ fun StatusScreen(vm: MusicViewModel) {
                 Button(onClick = { c.verify() }, enabled = !(state?.busy ?: false)) { Text("Verify") }
             }
             Button(onClick = { scope.launch { discoverAndSync(vm) } }, enabled = !(state?.busy ?: false)) { Text("Find laptop & sync") }
+            TextButton(onClick = {
+                scope.launch {
+                    val url = c.state.value.server
+                    if (url == null) { updateMsg = "Laptop not found"; return@launch }
+                    val serverVersion = updater.check(url)
+                    if (serverVersion == null) { updateMsg = "Update check failed"; return@launch }
+                    val current = BuildConfig.VERSION_NAME
+                    if (isNewerVersion(serverVersion, current)) pendingVersion = serverVersion
+                    else updateMsg = "Up to date ($current)"
+                }
+            }) { Text("Check for update") }
+            updateMsg?.let { Text(it) }
+        }
+        pendingVersion?.let { v ->
+            AlertDialog(
+                onDismissRequest = { pendingVersion = null },
+                title = { Text("Update available") },
+                text = { Text("Update to $v?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        pendingVersion = null
+                        scope.launch {
+                            val url = controller?.state?.value?.server ?: return@launch
+                            updater.downloadAndInstall(url)
+                                .onSuccess { updateMsg = "Installing $v…" }
+                                .onFailure { updateMsg = "Install failed: ${it.message}" }
+                        }
+                    }) { Text("Update") }
+                },
+                dismissButton = { TextButton(onClick = { pendingVersion = null }) { Text("Cancel") } },
+            )
         }
     }
 }
