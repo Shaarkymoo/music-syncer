@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -23,9 +24,10 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.ViewModelProvider
 import com.musicsyncer.app.ui.BrowserScreen
 import com.musicsyncer.app.ui.EditorScreen
+import com.musicsyncer.app.ui.LogScreen
 import com.musicsyncer.app.ui.StatusScreen
 
-private enum class Screen { Status, Browser }
+private enum class Screen { Status, Browser, Log }
 
 class MainActivity : ComponentActivity() {
     private val vm: MusicViewModel by lazy { ViewModelProvider(this)[MusicViewModel::class.java] }
@@ -45,7 +47,8 @@ class MainActivity : ComponentActivity() {
                             when {
                                 editing -> EditorScreen(vm, editRel!!, onClose = { editRel = null })
                                 screen == Screen.Status -> StatusScreen(vm)
-                                else -> BrowserScreen(vm, onEditSong = { editRel = it })
+                                screen == Screen.Browser -> BrowserScreen(vm, onEditSong = { editRel = it })
+                                else -> LogScreen(vm)
                             }
                         }
                         if (!editing) {
@@ -61,6 +64,12 @@ class MainActivity : ComponentActivity() {
                                     onClick = { screen = Screen.Browser },
                                     icon = { Icon(Icons.AutoMirrored.Filled.List, contentDescription = null) },
                                     label = { Text("Browse") },
+                                )
+                                NavigationBarItem(
+                                    selected = screen == Screen.Log,
+                                    onClick = { screen = Screen.Log },
+                                    icon = { Icon(Icons.Filled.Info, contentDescription = null) },
+                                    label = { Text("Log") },
                                 )
                             }
                         }
