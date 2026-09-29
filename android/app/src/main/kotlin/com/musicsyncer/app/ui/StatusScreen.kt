@@ -47,7 +47,7 @@ fun StatusScreen(vm: MusicViewModel) {
                 Button(onClick = { c.sync(c.state.value.server) }, enabled = !(state?.busy ?: false)) { Text("Sync") }
                 Button(onClick = { c.verify() }, enabled = !(state?.busy ?: false)) { Text("Verify") }
             }
-            Button(onClick = { scope.launch { discoverAndSync(vm) } }) { Text("Find laptop & sync") }
+            Button(onClick = { scope.launch { discoverAndSync(vm) } }, enabled = !(state?.busy ?: false)) { Text("Find laptop & sync") }
         }
     }
 }

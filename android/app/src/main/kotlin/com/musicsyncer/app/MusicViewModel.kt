@@ -33,8 +33,18 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     fun restoreFolder() {
         val uri = prefs.getString("folder_uri", null) ?: return
-        _fs = SafFs(getApplication(), Uri.parse(uri))
-        _controller = SyncController(getApplication(), _fs!!, store)
+        val fs = try {
+            SafFs(getApplication(), Uri.parse(uri))
+        } catch (e: Exception) {
+            // SAF grant revoked (e.g. permission removed or app data cleared):
+            // SafFs throws in its constructor. Clear the stale prefs and fall
+            // back to the folder picker instead of crashing on startup.
+            prefs.edit().remove("folder_uri").remove("folder_name").apply()
+            _controller = null
+            null
+        }
+        _fs = fs
+        if (fs != null) _controller = SyncController(getApplication(), fs, store)
     }
 
     override fun onCleared() {

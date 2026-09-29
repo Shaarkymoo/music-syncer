@@ -33,13 +33,17 @@ class SyncController(
 
     fun setServer(url: String) { _state.value = _state.value.copy(server = url) }
 
-    fun scan() { scope.launch { runScan() } }
+    fun scan() {
+        if (_state.value.busy) return
+        scope.launch { runScan() }
+    }
 
     private suspend fun runScan(): Long = withContext(Dispatchers.IO) {
         scan(fs, store, ourDevice, System.currentTimeMillis() * 1_000_000)
     }
 
     fun sync(serverUrl: String?) {
+        if (_state.value.busy) return
         val url = serverUrl ?: _state.value.server ?: return
         scope.launch {
             _state.value = _state.value.copy(busy = true, error = null)
@@ -60,6 +64,7 @@ class SyncController(
     }
 
     fun verify() {
+        if (_state.value.busy) return
         scope.launch {
             _state.value = _state.value.copy(busy = true, error = null)
             try {
