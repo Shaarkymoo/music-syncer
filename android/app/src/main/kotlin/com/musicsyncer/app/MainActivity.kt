@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Info
@@ -121,7 +122,10 @@ private fun MusicSyncApp(vm: MusicViewModel) {
                 }
             },
         ) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
+            Box(
+                if (editing) Modifier.fillMaxSize().systemBarsPadding()
+                else Modifier.fillMaxSize().padding(padding)
+            ) {
                 Crossfade(targetState = screen, label = "screen") { s ->
                     when {
                         editing -> EditorScreen(vm, editRel!!, onClose = { editRel = null })
