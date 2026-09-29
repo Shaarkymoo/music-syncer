@@ -14,6 +14,8 @@
 - **Lazy scan:** a new path journals `CREATE` with `sha256 = NULL` and upserts the manifest with `sha = NULL` (size + mtime filled). A path whose size/mtime changed journals `MODIFY` with `sha = NULL` (can't tell content without hashing) and updates size/mtime. The scan NEVER hashes during the scan pass.
 - **SHA adoption:** during a sync session, for each path where the REMOTE manifest has a non-null sha, the LOCAL manifest has NULL sha, the local file EXISTS, and the sizes match EXACTLY → upsert the local manifest with the remote sha (no hash, no transfer). Runs on BOTH sides (client adopts from server; server adopts from client via the same reconcile step in its session handling).
 - **No adoption on size mismatch** — a size mismatch means the file differs; it goes through the normal create/modify path (which now transfers without a prior hash).
+- **Transfer-time verification is conditional:** `apply` ALWAYS computes the sha of received bytes and stores it in the manifest (lazy fill — integrity is recorded, not skipped). It verifies against the expected sha ONLY when one is present; when the expected sha is None (source never hashed), no comparison is made. The content-addressed copy path still requires a non-null sha; None-sha fetches take the normal transfer path.
+- **`ms verify` semantics:** files with `sha = None` are counted as UNVERIFIED, not MISMATCH. Output: `OK: N verified, M unverified` when no verified file mismatches; `MISMATCH` only for files with a stored sha whose content differs.
 - **Merge change:** in `buildPlan`, when both sides have the path and local sha is NULL but remote sha is non-null AND sizes match → treat as identical (no fetch, no conflict); the adoption step writes the sha. When local sha is NULL and sizes DIFFER → treat as a real change (fetch remote or push local per LWW on journal ts).
 - **Progress hooks:** `scan(fs, store, device, nowNs, progress: ((done: int, total: int, rel: str) -> None) | None = None)` and `runSyncSession(..., progress: (SyncPhase, int, int, str) -> None | None = None)` with `SyncPhase = SCAN | PLAN | TRANSFER | DONE` (Python) and a matching `ProgressListener` interface in Kotlin. Callbacks are best-effort (must never throw into the engine).
 - The wire protocol and JSON shapes are UNCHANGED (NULL sha already legal).
@@ -113,13 +115,15 @@ git commit -m "feat(engine): lazy scan — metadata-only first pass (no hashing)
 ## Task 2: Python — sha adoption + merge NULL-sha handling
 
 **Files:**
-- Modify: `ms/merge.py`, `ms/client.py`, `ms/server.py`, `tests/test_merge.py`, `tests/test_sync_integration.py`
+- Modify: `ms/merge.py`, `ms/apply.py`, `ms/client.py`, `ms/server.py`, `ms/cli.py`, `tests/test_merge.py`, `tests/test_sync_integration.py`, `tests/test_cli.py`
 
 **Interfaces:**
 - Produces: `adopt_shas(store, remote_manifest: dict[str, tuple[int, int, str]], fs) -> list[str]` — for each path in remote_manifest with non-null sha where the local manifest row exists with NULL sha and equal size and the local file exists → `manifest_upsert(path, size, mtime_ns, remote_sha, now_ns)`; returns the adopted paths.
-- `merge.build_plan`: in the both-sides-differ branch, add before the LWW logic: `if local_sha[path] is None and local size == remote size → continue` (identical, adoption handles the sha). If local sha is None and sizes differ → fall through to LWW as a real change.
+- `merge.build_plan`: in the both-sides-differ branch, add before the LWW logic: `if local_sha[path] is None and local size == remote size → continue` (identical, adoption handles the sha). If local sha is None and sizes differ → fall through to LWW as a real change. Fetches may carry `sha=None` (lazy source) — that is legal.
+- `apply_plan` fetch branch: always compute the received bytes' sha; store it in the manifest; raise `ValueError` only when the expected sha is non-null AND differs. (Was: always compare + store the expected sha.)
 - `client.run_sync_session`: after building `server_manifest`, call `adopt_shas(store, server_manifest, fs)` BEFORE `build_plan` (so the client's plan sees the adopted shas → no fetches for identical files).
 - `server.py` `/sync` handler: after its server-side scan, call `adopt_shas(server._conn, client_manifest, fs)` so the server adopts phone-side shas too (before computing its response).
+- `ms/cli.py verify`: count None-sha rows as UNVERIFIED; `OK: N verified, M unverified` when no mismatch; MISMATCH only for verified files that differ.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -152,6 +156,30 @@ def test_identical_trees_sync_with_zero_transfer(pair, tmp_path):
 ```
 (NOTE: the existing `_client_scan`/`_sync` helpers open fresh connections; adapt the assertion to re-open the phone DB or have the helper return the db_path and open it for the assertion.)
 
+`tests/test_cli.py` — update the two verify tests for the new None-sha semantics:
+```python
+def test_verify_clean_tree_unverified(tmp_path: Path, capsys):
+    root = tmp_path / "root"
+    (root / "A.mp3").write_bytes(b"data")
+    cli.main(["scan", "--path", str(root), "--db", str(tmp_path / "t.db")])
+    code = cli.main(["verify", "--path", str(root), "--db", str(tmp_path / "t.db")])
+    out = capsys.readouterr().out
+    assert code == 0 and "unverified" in out  # lazy scan -> no hashes -> unverified
+
+def test_verify_detects_tamper_of_verified_file(tmp_path: Path, capsys):
+    root = tmp_path / "root"
+    p = root / "A.mp3"
+    p.write_bytes(b"data")
+    conn = db.init_db(tmp_path / "t.db")
+    db.journal_append(conn, "CREATE", "A.mp3", 4, "deadbeef", 1, "laptop")  # seed a real sha
+    db.manifest_upsert(conn, "A.mp3", 4, 1, "deadbeef", 1)
+    conn.close()
+    p.write_bytes(b"TAMPERED!")
+    code = cli.main(["verify", "--path", str(root), "--db", str(tmp_path / "t.db")])
+    out = capsys.readouterr().out
+    assert code == 0 and "MISMATCH" in out and "A.mp3" in out  # verified file tampered
+```
+
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `/usr/bin/python3 -m pytest tests/test_merge.py tests/test_sync_integration.py -v`
@@ -161,8 +189,10 @@ Expected: FAIL — the NULL-sha cases and the adoption scenario fail (fetch happ
 
 `ms/merge.py`: add the NULL-sha-same-size → identical branch in the both-sides loop.
 `ms/adopt.py` (new, or inside client.py): `adopt_shas(store, remote_manifest, fs, now_ns)` as specified. Reads the local manifest rows via `db.manifest_get`, checks `row.sha256 is None and row.size == remote_size and fs.exists(path)`.
+`ms/apply.py`: in the fetch branch, always compute `received_sha = sha256_file_bytes(data)`; if the expected sha is non-null and `received_sha != expected` → raise; store `received_sha` in the manifest and journal (instead of the expected sha). The content-addressed copy path requires a non-null sha (leave as-is).
 `ms/client.py`: call `adopt_shas(conn, server_manifest, fs, now_ns)` after parsing the response, before `build_plan`.
 `ms/server.py`: in `/sync`, after `scan_mod.scan(...)`, call `adopt_shas(server._conn, client_manifest_from_request, PathFs(server.root), time.time_ns())` before building `server_journal_ops`/`server_manifest`. (The server needs the client's manifest as a dict — the request's `manifest` list of arrays → dict.)
+`ms/cli.py verify`: build a sha lookup only over manifest rows with a non-null sha; rows with None sha count as UNVERIFIED; print `OK: N verified, M unverified` when no mismatch; `MISMATCH <path>` only for verified rows whose content differs. Exit code 0 regardless (as before).
 
 - [ ] **Step 4: Run to verify they pass**
 
