@@ -46,3 +46,6 @@ Install on the phone (USB debugging enabled, phone connected):
 First run: tap "Choose music folder" and pick the music folder (e.g. `/sdcard/Music`).
 Then: start the laptop daemon (`msserve`), tap "Find laptop & sync". Subsequent syncs:
 make changes, tap Scan, then Sync.
+## Security
+
+See [docs/security.md](docs/security.md) — what is exposed, what is always on, where it works, and the honest caveats.
