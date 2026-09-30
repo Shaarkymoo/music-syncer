@@ -9,6 +9,7 @@ from ms.progress import Progress, SyncPhase, emit
 def scan(root: Path, conn, device_id: str, now_ns: int,
          progress: Progress | None = None) -> int:
     """Diff disk vs manifest; journal CREATE/MODIFY/DELETE; return journal head."""
+    emit(progress, SyncPhase.SCAN, 0, 0, "")  # walk marker: tree walk starting
     disk: dict[str, Path] = {}
     for p in root.rglob("*"):
         if not p.is_file():

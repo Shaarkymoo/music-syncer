@@ -26,10 +26,25 @@ class ProgressTest {
         scan(fs(), store(), "laptop", 1) { phase, done, total, rel ->
             events.add(Event(phase, done, total, rel))
         }
-        assertEquals(listOf(SyncPhase.SCAN, SyncPhase.SCAN, SyncPhase.SCAN), events.map { it.phase })
-        assertEquals(listOf(1, 2, 3), events.map { it.done })  // 1-based, monotonically increasing
-        assertTrue(events.all { it.total == 3 })               // total == number of files
-        assertEquals(listOf("a.mp3", "b.mp3", "c.mp3"), events.map { it.rel })
+        val fileEvents = events.drop(1)  // skip the (SCAN, 0, 0, "") walk marker
+        assertEquals(listOf(SyncPhase.SCAN, SyncPhase.SCAN, SyncPhase.SCAN), fileEvents.map { it.phase })
+        assertEquals(listOf(1, 2, 3), fileEvents.map { it.done })  // 1-based, monotonically increasing
+        assertTrue(fileEvents.all { it.total == 3 })               // total == number of files
+        assertEquals(listOf("a.mp3", "b.mp3", "c.mp3"), fileEvents.map { it.rel })
+    }
+
+    @Test
+    fun scanEmitsWalkMarkerFirst() {
+        Files.createDirectories(dir.resolve("root"))
+        for (name in listOf("a.mp3", "b.mp3", "c.mp3")) {
+            Files.write(dir.resolve("root/$name"), byteArrayOf(1))
+        }
+        val events = mutableListOf<Event>()
+        scan(fs(), store(), "laptop", 1) { phase, done, total, rel ->
+            events.add(Event(phase, done, total, rel))
+        }
+        assertEquals(Event(SyncPhase.SCAN, 0, 0, ""), events.first())  // walk marker before fs.list()
+        assertEquals(listOf(1, 2, 3), events.drop(1).map { it.done })  // per-file events unchanged
     }
 
     @Test

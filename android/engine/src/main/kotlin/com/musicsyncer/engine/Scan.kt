@@ -1,6 +1,7 @@
 package com.musicsyncer.engine
 
 fun scan(fs: Fs, store: SyncStore, deviceId: String, nowNs: Long, progress: ProgressListener? = null): Long {
+    emit(progress, SyncPhase.SCAN, 0, 0, "")  // walk marker: tree walk starting
     val disk = mutableMapOf<String, FsEntry>()
     for (e in fs.list()) {
         if (e.rel.substringAfterLast('/').startsWith(".ms-partial-")) { fs.delete(e.rel); continue }

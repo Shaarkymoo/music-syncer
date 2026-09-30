@@ -32,10 +32,25 @@ def test_scan_reports_progress_per_file(tmp_path):
     events = []
     scan.scan(root, conn, "laptop", 1,
               progress=lambda phase, done, total, rel: events.append((phase, done, total, rel)))
-    assert [e[0] for e in events] == [SyncPhase.SCAN] * 3
-    assert [e[1] for e in events] == [1, 2, 3]          # 1-based, monotonically increasing
-    assert all(e[2] == 3 for e in events)               # total == number of files
-    assert [e[3] for e in events] == ["a.mp3", "b.mp3", "c.mp3"]
+    file_events = events[1:]                            # skip the (SCAN, 0, 0, "") walk marker
+    assert [e[0] for e in file_events] == [SyncPhase.SCAN] * 3
+    assert [e[1] for e in file_events] == [1, 2, 3]     # 1-based, monotonically increasing
+    assert all(e[2] == 3 for e in file_events)          # total == number of files
+    assert [e[3] for e in file_events] == ["a.mp3", "b.mp3", "c.mp3"]
+    conn.close()
+
+
+def test_scan_emits_walk_marker_first(tmp_path):
+    root = tmp_path / "music"
+    root.mkdir()
+    for name in ("a.mp3", "b.mp3", "c.mp3"):
+        (root / name).write_bytes(b"x")
+    conn = db.init_db(tmp_path / "t.db")
+    events = []
+    scan.scan(root, conn, "laptop", 1,
+              progress=lambda phase, done, total, rel: events.append((phase, done, total, rel)))
+    assert events[0] == (SyncPhase.SCAN, 0, 0, "")     # walk marker before fs.list()
+    assert [e[1] for e in events[1:]] == [1, 2, 3]     # per-file events unchanged
     conn.close()
 
 
