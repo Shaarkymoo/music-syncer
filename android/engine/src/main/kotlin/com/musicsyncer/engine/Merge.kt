@@ -26,6 +26,7 @@ fun buildPlan(
     val remoteLatest = latestOpByPath(remoteJournal)
     val localSha = localManifest.mapValues { it.value.third }
     val opsByPath = localJournal.groupBy { it.path }
+    val remoteOpsByPath = remoteJournal.groupBy { it.path }
 
     for ((path, v) in remoteManifest.entries.sortedBy { it.key }) {
         val size = v.first
@@ -58,10 +59,16 @@ fun buildPlan(
 
     for ((path, v) in localManifest.entries.sortedBy { it.key }) {
         if (path in remoteManifest) continue
+        // The remote explicitly deleted this path: mirror the delete. This beats
+        // an unseen local CREATE — otherwise a stale local copy whose CREATE is
+        // unseen (e.g. the whole phone library on first sync) would be pushed
+        // back, resurrecting a file the remote deliberately removed.
+        val remoteDeleted = remoteOpsByPath[path].orEmpty().any { it.op == "DELETE" }
         val unseenLocalChange = opsByPath[path].orEmpty().any {
             it.id > peerCursor && (it.op == "CREATE" || it.op == "MODIFY") && it.device == ourDevice
         }
-        if (unseenLocalChange) plan.push.add(Triple(path, v.first, v.third))
+        if (remoteDeleted) plan.delete.add(path)
+        else if (unseenLocalChange) plan.push.add(Triple(path, v.first, v.third))
         else plan.delete.add(path)
     }
     return plan

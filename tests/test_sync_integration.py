@@ -84,6 +84,45 @@ def test_phone_delete_propagates_to_laptop(pair, tmp_path):
     assert not (root_a / "A.mp3").exists()         # laptop must delete too
 
 
+def test_reacquired_stale_copy_pushed_back_without_error(pair, tmp_path):
+    # Phone re-acquires a file the laptop deleted: that is a fresh addition, so
+    # it propagates both ways (mirror) and no error occurs.
+    root_a, root_b, srv = pair
+    (root_a / "A.mp3").write_bytes(b"content-a")
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    db_path = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path, srv, tmp_path)          # both have A.mp3; cursor past CREATE
+    (root_a / "A.mp3").unlink()
+    scan.scan(root_a, srv._conn, "laptop", 2)      # laptop deletes A.mp3
+    db_path2 = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path2, srv, tmp_path)         # phone deletes stale copy
+    assert not (root_b / "A.mp3").exists()
+    (root_b / "A.mp3").write_bytes(b"content-a")   # user re-adds it on the phone
+    db_path3 = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path3, srv, tmp_path)         # pushed back; server re-gains it
+    assert (root_a / "A.mp3").exists() and (root_b / "A.mp3").exists()
+
+
+def test_seen_server_delete_stale_copy_deleted_not_pushed(pair, tmp_path):
+    # Legacy state: the phone saw the server's DELETE (cursor past it) but kept
+    # its stale copy (pre-fix behavior). The stale copy must be deleted, not
+    # pushed back, and the push must not error on the just-deleted file.
+    root_a, root_b, srv = pair
+    (root_a / "A.mp3").write_bytes(b"content-a")
+    scan.scan(root_a, srv._conn, "laptop", 1)
+    db_path = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path, srv, tmp_path)          # both have A.mp3
+    (root_a / "A.mp3").unlink()
+    scan.scan(root_a, srv._conn, "laptop", 2)      # laptop deletes A.mp3
+    conn = db.init_db(db_path)
+    db.sync_state_set(conn, "laptop", srv._conn.execute("SELECT MAX(id) FROM journal").fetchone()[0], 3)
+    conn.close()                                   # cursor past the DELETE, stale copy kept
+    db_path2 = _client_scan(root_b, tmp_path)
+    _sync(root_b, db_path2, srv, tmp_path)         # must not raise
+    assert not (root_b / "A.mp3").exists()         # stale copy deleted
+    assert not (root_a / "A.mp3").exists()         # not resurrected
+
+
 def test_phone_move_propagates(pair, tmp_path):
     root_a, root_b, srv = pair
     (root_a / "Rock").mkdir()

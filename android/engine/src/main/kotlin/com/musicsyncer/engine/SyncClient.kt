@@ -105,7 +105,15 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
     for ((i, rel) in applied.fetched.withIndex()) emit(progress, SyncPhase.TRANSFER, i + 1, applied.fetched.size, rel)
 
     // 5. SERVER's plan: peer_cursor = how much of the SERVER's journal WE have seen.
-    val serverPlan = buildPlan(serverManifest, serverOps, ourManifest, ourOps, ourCursor, serverDevice)
+    //    Recompute OUR state after apply so the server plan sees files deleted
+    //    this session as gone — otherwise it would fetch (push) a file the phone
+    //    just deleted and the push read would fail.
+    val serverPlan = buildPlan(
+        serverManifest, serverOps,
+        store.manifestAll().associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) },
+        store.journalSince(serverCursorForUs),
+        ourCursor, serverDevice,
+    )
     val pushed = mutableListOf<String>()
     for ((i, item) in serverPlan.fetch.withIndex()) {
         val (rel, _size, sha) = item

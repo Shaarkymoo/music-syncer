@@ -31,6 +31,18 @@ def test_local_only_path_without_unseen_change_is_deleted():
     assert plan.delete == ["A.mp3"]
 
 
+def test_local_only_path_with_remote_delete_is_deleted():
+    # The remote explicitly deleted A.mp3; we must mirror the delete even though
+    # our CREATE is unseen — pushing would resurrect a file the remote removed
+    # (the first-sync stale-copy case, e.g. the phone's Bee Gees album).
+    local_journal = [{"id": 5, "op": "CREATE", "path": "A.mp3", "size": 10,
+                      "sha256": "aaa", "ts_ns": 100, "device": "me"}]
+    remote_journal = [{"id": 6, "op": "DELETE", "path": "A.mp3", "size": None,
+                       "sha256": None, "ts_ns": 200, "device": "phone"}]
+    plan = build_plan(_m("A.mp3", "aaa"), local_journal, {}, remote_journal, 0, "me")
+    assert plan.delete == ["A.mp3"] and plan.push == []
+
+
 def test_remote_path_with_unseen_local_delete_is_not_fetched():
     # We deleted A.mp3 (peer hasn't seen it); remote still has it — the remote's
     # plan will delete it, we must NOT fetch it back (resurrection).

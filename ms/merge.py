@@ -30,6 +30,9 @@ def build_plan(local_manifest: dict, local_journal: list[dict],
     ops_by_path: dict[str, list[dict]] = {}
     for op in local_journal:
         ops_by_path.setdefault(op["path"], []).append(op)
+    remote_ops_by_path: dict[str, list[dict]] = {}
+    for op in remote_journal:
+        remote_ops_by_path.setdefault(op["path"], []).append(op)
 
     for path, (size, _mtime, sha) in sorted(remote_manifest.items()):
         if path not in local_manifest:
@@ -59,10 +62,17 @@ def build_plan(local_manifest: dict, local_journal: list[dict],
     for path, (_size, _mtime, _sha) in sorted(local_manifest.items()):
         if path in remote_manifest:
             continue
+        # The remote explicitly deleted this path: mirror the delete. This beats
+        # an unseen local CREATE — otherwise a stale local copy whose CREATE is
+        # unseen (e.g. the whole phone library on first sync) would be pushed
+        # back, resurrecting a file the remote deliberately removed.
+        remote_deleted = any(op["op"] == "DELETE" for op in remote_ops_by_path.get(path, []))
         unseen_local_change = any(
             op["id"] > peer_cursor and op["op"] in ("CREATE", "MODIFY") and op["device"] == our_device
             for op in ops_by_path.get(path, []))
-        if unseen_local_change:
+        if remote_deleted:
+            plan.delete.append(path)
+        elif unseen_local_change:
             plan.push.append((path, local_manifest[path][0], local_manifest[path][2]))
         else:
             plan.delete.append(path)

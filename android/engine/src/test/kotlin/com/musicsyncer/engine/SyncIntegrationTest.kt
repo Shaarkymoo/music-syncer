@@ -87,6 +87,43 @@ class SyncIntegrationTest {
         } finally { p.srv.stop() }
     }
 
+    @Test fun reacquiredStaleCopyPushedBackWithoutError() {
+        // Phone re-acquires a file the laptop deleted: a fresh addition, so it
+        // propagates both ways (mirror) with no error.
+        val p = pair()
+        try {
+            Files.write(p.rootA.resolve("A.mp3"), byteArrayOf(1))
+            scan(PathFs(p.rootA), p.serverStore, "laptop", 1)
+            sync(p)                                   // both have A.mp3; cursor past CREATE
+            Files.delete(p.rootA.resolve("A.mp3"))
+            scan(PathFs(p.rootA), p.serverStore, "laptop", 2) // laptop deletes A.mp3
+            sync(p)                                   // phone deletes stale copy
+            assertEquals(false, Files.exists(p.rootB.resolve("A.mp3")))
+            Files.write(p.rootB.resolve("A.mp3"), byteArrayOf(1)) // user re-adds it
+            sync(p)                                   // pushed back; server re-gains it
+            assertEquals(true, Files.exists(p.rootA.resolve("A.mp3")))
+            assertEquals(true, Files.exists(p.rootB.resolve("A.mp3")))
+        } finally { p.srv.stop() }
+    }
+
+    @Test fun seenServerDeleteStaleCopyDeletedNotPushed() {
+        // Legacy state: phone saw the server's DELETE (cursor past it) but kept
+        // its stale copy. It must be deleted, not pushed back — and the push
+        // must not error on the just-deleted file.
+        val p = pair()
+        try {
+            Files.write(p.rootA.resolve("A.mp3"), byteArrayOf(1))
+            scan(PathFs(p.rootA), p.serverStore, "laptop", 1)
+            sync(p)                                   // both have A.mp3
+            Files.delete(p.rootA.resolve("A.mp3"))
+            scan(PathFs(p.rootA), p.serverStore, "laptop", 2) // laptop deletes A.mp3
+            clientStore().syncStateSet("laptop", p.serverStore.journalHead(), 3) // cursor past DELETE
+            sync(p)                                   // must not raise
+            assertEquals(false, Files.exists(p.rootB.resolve("A.mp3"))) // stale copy deleted
+            assertEquals(false, Files.exists(p.rootA.resolve("A.mp3"))) // not resurrected
+        } finally { p.srv.stop() }
+    }
+
     @Test fun phoneMovePropagates() {
         val p = pair()
         try {

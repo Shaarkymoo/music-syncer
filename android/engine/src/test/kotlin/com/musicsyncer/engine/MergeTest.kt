@@ -35,6 +35,20 @@ class MergeTest {
         assertEquals(listOf("A.mp3"), plan.delete)
     }
 
+    @Test fun localOnlyWithRemoteDeleteIsDeleted() {
+        // Remote explicitly deleted A.mp3: mirror the delete even though our
+        // CREATE is unseen — pushing would resurrect a deliberately removed file.
+        val plan = buildPlan(
+            m("A.mp3", "aaa"),
+            listOf(op(5, "CREATE", "A.mp3", "me")),
+            emptyMap(),
+            listOf(op(6, "DELETE", "A.mp3", "laptop")),
+            0, "me",
+        )
+        assertEquals(listOf("A.mp3"), plan.delete)
+        assertEquals(emptyList<Triple<String, Long, String?>>(), plan.push)
+    }
+
     @Test fun echoOpsDoNotCauseWrongPush() {
         val plan = buildPlan(m("A.mp3", "aaa"), listOf(op(5, "CREATE", "A.mp3", "phone")), emptyMap(), emptyList(), 0, "me")
         assertEquals(listOf("A.mp3"), plan.delete)

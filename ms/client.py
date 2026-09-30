@@ -89,6 +89,11 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
 
     # 5. SERVER's plan: what the server needs (fetch = push to it; delete/conflict = applied at /done).
     #    peer_cursor = how much of the SERVER's journal WE have seen.
+    #    Recompute OUR state after apply so the server plan sees files deleted
+    #    this session as gone — otherwise it would fetch (push) a file the phone
+    #    just deleted and the push read would fail.
+    our_manifest = {p: (s, m, h) for (p, s, m, h, _l) in db.manifest_all(conn)}
+    our_ops = db.journal_since(conn, server_cursor_for_us)
     server_plan = merge.build_plan(server_manifest, server_ops,
                                    our_manifest, our_ops, our_cursor,
                                    server_device)
