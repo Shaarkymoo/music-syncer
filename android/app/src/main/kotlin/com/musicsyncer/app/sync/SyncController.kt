@@ -31,6 +31,7 @@ data class ProgressState(
     val total: Int,
     val rel: String,
     val elapsedMs: Long = 0L,
+    val phaseStartNs: Long = 0L,
 )
 
 /** Human-readable phase label for the status UI. */
@@ -69,7 +70,7 @@ class SyncController(
 
     private fun progressListener(): ProgressListener = ProgressListener { phase, done, total, rel ->
         val elapsedMs = trackPhase(phase, done, total, rel)
-        _state.value = _state.value.copy(progress = ProgressState(phase, done, total, rel, elapsedMs))
+        _state.value = _state.value.copy(progress = ProgressState(phase, done, total, rel, elapsedMs, phaseStartNs))
     }
 
     fun scan() {
@@ -79,7 +80,7 @@ class SyncController(
             try {
                 runScan(progressListener())
             } catch (e: Exception) {
-                _state.value = _state.value.copy(error = e.message)
+                _state.value = _state.value.copy(error = e.message ?: e.javaClass.simpleName)
             } finally {
                 _state.value = _state.value.copy(busy = false, progress = null)
             }
@@ -98,7 +99,7 @@ class SyncController(
             try {
                 runSync(url)
             } catch (e: Exception) {
-                _state.value = _state.value.copy(error = e.message)
+                _state.value = _state.value.copy(error = e.message ?: e.javaClass.simpleName)
             } finally {
                 _state.value = _state.value.copy(busy = false, progress = null)
             }
@@ -116,7 +117,7 @@ class SyncController(
                 _state.value = _state.value.copy(discovering = false)
                 runSync(url)
             } catch (e: Exception) {
-                _state.value = _state.value.copy(error = e.message)
+                _state.value = _state.value.copy(error = e.message ?: e.javaClass.simpleName)
             } finally {
                 _state.value = _state.value.copy(busy = false, discovering = false, progress = null)
             }
@@ -142,7 +143,7 @@ class SyncController(
                 val manifest = store.manifestAll()
                 val mismatches = manifest.filterIndexed { i, m ->
                     val elapsedMs = trackPhase(SyncPhase.SCAN, i + 1, manifest.size, m.path)
-                    _state.value = _state.value.copy(progress = ProgressState(SyncPhase.SCAN, i + 1, manifest.size, m.path, elapsedMs))
+                    _state.value = _state.value.copy(progress = ProgressState(SyncPhase.SCAN, i + 1, manifest.size, m.path, elapsedMs, phaseStartNs))
                     m.sha256 != null && runCatching {
                         fs.openRead(m.path).use { com.musicsyncer.engine.Hashing.sha256(it) } == m.sha256
                     }.getOrDefault(false).not()
@@ -151,7 +152,7 @@ class SyncController(
                     lastSummary = if (mismatches.isEmpty()) "OK: all files match stored hashes" else "MISMATCH: ${mismatches.joinToString { it.path }}",
                 )
             } catch (e: Exception) {
-                _state.value = _state.value.copy(error = e.message)
+                _state.value = _state.value.copy(error = e.message ?: e.javaClass.simpleName)
             } finally {
                 _state.value = _state.value.copy(busy = false, progress = null)
             }

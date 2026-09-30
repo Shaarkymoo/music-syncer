@@ -17,6 +17,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -37,6 +38,7 @@ import com.musicsyncer.engine.SyncPhase
 import com.musicsyncer.app.sync.Updater
 import com.musicsyncer.app.sync.displayName
 import com.musicsyncer.app.sync.isNewerVersion
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -51,6 +53,14 @@ fun StatusScreen(vm: MusicViewModel) {
     val updater = remember { Updater(context) }
     var updateMsg by remember { mutableStateOf<String?>(null) }
     var pendingVersion by remember { mutableStateOf<String?>(null) }
+    var elapsedTick by remember { mutableStateOf(0L) }
+    LaunchedEffect(state?.busy, state?.progress?.phase) {
+        while (state?.busy == true) {
+            val phaseStart = state?.progress?.phaseStartNs ?: 0L
+            elapsedTick = if (phaseStart > 0L) (System.nanoTime() - phaseStart) / 1_000_000 else 0L
+            delay(250)
+        }
+    }
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Music Sync")
         vm.folderName?.let { Text("Folder: $it") } ?: Button(onClick = { picker.launch(null) }) { Text("Choose music folder") }
@@ -62,7 +72,7 @@ fun StatusScreen(vm: MusicViewModel) {
             if (s.discovering) {
                 DiscoveryLine()
             } else if (s.busy || s.progress != null) {
-                ProgressCard(s.progress)
+                ProgressCard(s.progress, elapsedTick)
             }
         }
         vm.controller?.let { c ->
@@ -109,7 +119,7 @@ fun StatusScreen(vm: MusicViewModel) {
 
 /** tqdm-style live progress card: phase (with stage timing), playlist, and song bars. */
 @Composable
-private fun ProgressCard(progress: ProgressState?) {
+private fun ProgressCard(progress: ProgressState?, elapsedMs: Long) {
     // Per-playlist song counts within the current phase, derived from `rel` (UI-side).
     val playlistCounts = remember { mutableStateMapOf<String, Int>() }
     var lastRel by remember { mutableStateOf<String?>(null) }
@@ -135,7 +145,7 @@ private fun ProgressCard(progress: ProgressState?) {
             val phaseLabel = progress?.phase?.displayName() ?: "Working"
             val count = progress?.let { if (it.total > 0) " · ${it.done}/${it.total}" else "" } ?: ""
             Text(
-                text = "$phaseLabel · ${formatElapsed(progress?.elapsedMs ?: 0L)}$count",
+                text = "$phaseLabel · ${formatElapsed(elapsedMs)}$count",
                 style = MaterialTheme.typography.titleMedium,
             )
             val fraction = progress?.let { if (it.total <= 0) 0f else it.done.toFloat() / it.total } ?: 0f
@@ -144,7 +154,7 @@ private fun ProgressCard(progress: ProgressState?) {
             // Bar 2 — playlist (parent dir of the current file).
             if (progress == null || progress.rel.isBlank()) {
                 Text(
-                    text = "walking folder tree…",
+                    text = blankRelLabel(progress),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -166,7 +176,7 @@ private fun ProgressCard(progress: ProgressState?) {
             // Bar 3 — song (basename of the current file) + phase counts.
             if (progress == null || progress.rel.isBlank()) {
                 Text(
-                    text = "walking folder tree…",
+                    text = blankRelLabel(progress),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -184,6 +194,14 @@ private fun ProgressCard(progress: ProgressState?) {
             }
         }
     }
+}
+
+/** Honest label for bars 2/3 when there's no current file: only the SCAN walk has no file yet. */
+private fun blankRelLabel(progress: ProgressState?): String = when {
+    progress == null || (progress.phase == SyncPhase.SCAN && progress.rel.isBlank()) -> "walking folder tree…"
+    progress.phase == SyncPhase.PLAN -> "Planning…"
+    progress.phase == SyncPhase.DONE -> "Final check…"
+    else -> progress.phase.displayName()
 }
 
 /** Indeterminate "looking for laptop" line shown while mDNS discovery runs. */

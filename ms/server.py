@@ -64,7 +64,7 @@ class SyncServer:
                     dur = ""
                     start = getattr(_req_start, "t", None)
                     if start is not None:
-                        dur = f" ({int((time.time() - start) * 1000)} ms)"
+                        dur = f" ({int((time.monotonic() - start) * 1000)} ms)"
                     sys.stderr.write(
                         f"[{time.strftime('%H:%M:%S')}] {method} {path} -> {args[1]}{dur}\n")
                 elif format.startswith("code %d"):
@@ -81,7 +81,7 @@ class SyncServer:
                 self.wfile.write(body)
 
             def do_GET(self):
-                _req_start.t = time.time()
+                _req_start.t = time.monotonic()
                 parsed = urllib.parse.urlparse(self.path)
                 qs = urllib.parse.parse_qs(parsed.query)
                 try:
@@ -136,7 +136,7 @@ class SyncServer:
                     self._send_json({"error": str(e)}, 500)
 
             def do_POST(self):
-                _req_start.t = time.time()
+                _req_start.t = time.monotonic()
                 parsed = urllib.parse.urlparse(self.path)
                 qs = urllib.parse.parse_qs(parsed.query)
                 length = int(self.headers.get("Content-Length", 0))
