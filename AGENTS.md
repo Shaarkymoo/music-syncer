@@ -185,8 +185,8 @@ $ADB shell run-as com.musicsyncer.app cat databases/music-sync.db > /tmp/phone.d
 
 ## 6. Current state (last checkpoint: real-sync triage + MediaStore fast path, Oct 2026)
 
-- `master` at `02e39e0` — previous fixes merged; MediaStore fast path committed
-  on top (working tree should be clean after this round).
+- `master` at `a44ac47` — real-sync debugging round merged (fast-path rel-prefix
+  fix, `?`-filename renames, delete-propagation + fresh-state fixes).
 - **Real-sync hang fixed** (`02e39e0`): first sync froze 20+ min in `adoptShas`
   (per-path SAF `exists()` ~200ms × 6k files). Now: `exists` predicate param
   (phone passes `{ true }` — post-scan manifest is the disk snapshot), new
@@ -201,14 +201,16 @@ $ADB shell run-as com.musicsyncer.app cat databases/music-sync.db > /tmp/phone.d
   missed) and re-stamps sub-second mtime precision artifacts without journaling,
   so the index never causes phantom MODIFY/DELETE storms. UI: "Instant sync is
   off" card with an Enable button on the Status screen.
-- **Next step (user + agent):** reinstall APK (`adb install -r …`), tap
-  **Enable** for instant sync, then **Find laptop & sync** — expect the first
-  sync in ~15-30 s (adoption now with progress), 2 laptop-only files
-  transferred, 25 Bee Gees files deleted from the phone, and an instant Browse.
+- **First real sync DONE (verified 2026-10-01):** after the fixes below, the
+  phone and laptop are fully converged — 6,053 files each, the 25 Bee Gees
+  files deleted from the phone, the 2 laptop-only files (renamed to drop a
+  `?` in the filename, which SAF/FAT32 can't store) transferred. Sync now
+  takes ~5 s (MediaStore fast list) with zero transfers on identical trees.
+  Phone DB state: manifest 6,053, 0 NULL-sha rows, sync_state cursor 6,109.
 - Known remaining work: shared-token auth (deferred), stop-scan button (user
   deferred — needs cooperative cancellation in `runSyncSession` + UI), any
   follow-ups from the real sync test.
 
-**Test counts:** Python 77 · engine 67 · app 23. **Delegated sessions** for
+**Test counts:** Python 79 · engine 70 · app 27. **Delegated sessions** for
 prior work are in `.superpowers/sdd/progress.md`; `notes.md` has the full
 project writeup and design rationale.
