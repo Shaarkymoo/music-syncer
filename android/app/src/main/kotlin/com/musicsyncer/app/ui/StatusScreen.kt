@@ -1,5 +1,8 @@
 package com.musicsyncer.app.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import com.musicsyncer.app.BuildConfig
 import com.musicsyncer.app.MusicViewModel
 import com.musicsyncer.app.sync.ProgressState
@@ -50,6 +54,14 @@ fun StatusScreen(vm: MusicViewModel) {
     val controller = vm.controller
     val state by controller?.state?.collectAsState() ?: rememberStableState()
     val context = LocalContext.current
+    var fastEnabled by remember { mutableStateOf(fastSyncAvailable(context)) }
+    var fastMsg by remember { mutableStateOf<String?>(null) }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        fastEnabled = granted
+        fastMsg = if (granted) "Fast sync enabled — scans take seconds now."
+        else "Fast sync off — syncs still work, just slower. Enable anytime in Settings."
+        if (granted) vm.refreshFs()
+    }
     val updater = remember { Updater(context) }
     var updateMsg by remember { mutableStateOf<String?>(null) }
     var pendingVersion by remember { mutableStateOf<String?>(null) }
@@ -64,6 +76,22 @@ fun StatusScreen(vm: MusicViewModel) {
     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Music Sync")
         vm.folderName?.let { Text("Folder: $it") } ?: Button(onClick = { picker.launch(null) }) { Text("Choose music folder") }
+        if (vm.folderName != null && !fastEnabled) {
+            Card(
+                Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Instant sync is off", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "Allow Music Sync to read audio so syncs take seconds instead of minutes. It only uses the folder you picked.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Button(onClick = { permissionLauncher.launch(Manifest.permission.READ_MEDIA_AUDIO) }) { Text("Enable") }
+                    fastMsg?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                }
+            }
+        }
         state?.let { s ->
             Text("Server: ${s.server ?: "not found"}")
             Text("Last sync: ${s.lastSync ?: "-"}")
@@ -203,6 +231,11 @@ private fun blankRelLabel(progress: ProgressState?): String = when {
     progress.phase == SyncPhase.DONE -> "Final check…"
     else -> progress.phase.displayName()
 }
+
+/** True when the app can use the MediaStore fast sync path (audio permission held, Android 13+). */
+private fun fastSyncAvailable(context: android.content.Context): Boolean =
+    Build.VERSION.SDK_INT >= 33 &&
+        ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
 
 /** Indeterminate "looking for laptop" line shown while mDNS discovery runs. */
 @Composable

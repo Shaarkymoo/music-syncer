@@ -152,8 +152,6 @@ $ADB shell run-as com.musicsyncer.app cat databases/music-sync.db > /tmp/phone.d
 **Out of scope / deferred:**
 - Shared-token auth (user: "lets implement that later"). Currently the port
   is protected only by the LAN-only ufw rule.
-- MediaStore enumeration for fast phone walks — needs `READ_MEDIA_AUDIO`
-  permission; **flag the user before adding** any permission.
 - Move/rename detection (stays DELETE+CREATE), a media player (Samsung Music
   is the player), Android background auto-sync, trash/recycle bin.
 
@@ -185,27 +183,32 @@ $ADB shell run-as com.musicsyncer.app cat databases/music-sync.db > /tmp/phone.d
 
 ---
 
-## 6. Current state (last checkpoint: Phase 2C merged, Oct 2026)
+## 6. Current state (last checkpoint: real-sync triage + MediaStore fast path, Oct 2026)
 
-- `master` at `c3e4b58` — **everything merged, working tree clean**.
-- Phase 2C (progress UX + no silent failures) shipped: engine walk-marker
-  `(SCAN, 0, 0, "")` before `fs.list()` (makes the phone's ~2-min SAF tree
-  walk visible instead of a stuck "Working"), 3-bar tqdm progress with live
-  elapsed ticker, live "Looking for laptop…" discovery state, double-scan
-  removed from `sync()`, server request/error logging to stderr.
-- **Firewall rule has been run by the user**: `sudo ufw allow from
-  192.168.29.0/24 to any port 8756 proto tcp` — phone can now reach the
-  laptop server. This was the last blocker.
-- **Next unblocked step (user + agent):** first real end-to-end sync —
-  start `msserve` (Section 3.1), tap **Find laptop & sync** on the phone,
-  watch it adopt ~6,053 shas, transfer 2 laptop-only files, and delete the
-  25 Bee Gees files from the phone. Watch for: elapsed timers, the walk
-  marker phase, playlist/song progress, and any error surfacing (report
-  anything that looks silent).
-- Known remaining work: shared-token auth (deferred), MediaStore
-  enumeration (permission — flag user), any follow-ups from the real sync
-  test.
+- `master` at `02e39e0` — previous fixes merged; MediaStore fast path committed
+  on top (working tree should be clean after this round).
+- **Real-sync hang fixed** (`02e39e0`): first sync froze 20+ min in `adoptShas`
+  (per-path SAF `exists()` ~200ms × 6k files). Now: `exists` predicate param
+  (phone passes `{ true }` — post-scan manifest is the disk snapshot), new
+  `SyncPhase.ADOPT` with per-file progress. Browser was calling `fs.list()`
+  (full 6,076-file recursive SAF walk) per navigation — new `Fs.listDir(rel)`
+  lists one level; browse is instant and errors surface.
+- **MediaStore fast path** (permission user-approved): optional `READ_MEDIA_AUDIO`
+  (Android 13+, runtime, read-only, revocable; denied → graceful SAF fallback).
+  When granted, `HybridFs` lists the picked folder via one MediaStore query
+  (seconds instead of the ~2.5-min SAF walk); SAF still does all writes/deletes.
+  `HybridFs` reconciles index lag (SAF-fallback for manifest rows the index
+  missed) and re-stamps sub-second mtime precision artifacts without journaling,
+  so the index never causes phantom MODIFY/DELETE storms. UI: "Instant sync is
+  off" card with an Enable button on the Status screen.
+- **Next step (user + agent):** reinstall APK (`adb install -r …`), tap
+  **Enable** for instant sync, then **Find laptop & sync** — expect the first
+  sync in ~15-30 s (adoption now with progress), 2 laptop-only files
+  transferred, 25 Bee Gees files deleted from the phone, and an instant Browse.
+- Known remaining work: shared-token auth (deferred), stop-scan button (user
+  deferred — needs cooperative cancellation in `runSyncSession` + UI), any
+  follow-ups from the real sync test.
 
-**Test counts:** Python 77 · engine 65 · app 15. **Delegated sessions** for
+**Test counts:** Python 77 · engine 67 · app 23. **Delegated sessions** for
 prior work are in `.superpowers/sdd/progress.md`; `notes.md` has the full
 project writeup and design rationale.

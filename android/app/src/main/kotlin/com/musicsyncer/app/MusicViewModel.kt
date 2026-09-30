@@ -1,9 +1,17 @@
 package com.musicsyncer.app
 
+import android.Manifest
 import android.app.Application
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.provider.DocumentsContract
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
+import com.musicsyncer.app.fs.HybridFs
+import com.musicsyncer.app.fs.MediaStoreLister
 import com.musicsyncer.app.fs.SafFs
+import com.musicsyncer.app.fs.volumeAndPath
 import com.musicsyncer.app.store.MusicSyncDatabase
 import com.musicsyncer.app.store.RoomStore
 import com.musicsyncer.app.sync.Discovery
@@ -27,14 +35,13 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         val app = getApplication<Application>()
         try { app.contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_GRANT_WRITE_URI_PERMISSION) } catch (_: SecurityException) {}
         prefs.edit().putString("folder_uri", uri.toString()).putString("folder_name", name).apply()
-        _fs = SafFs(app, uri)
-        _controller = SyncController(app, _fs!!, store)
+        buildFs(app, uri)
     }
 
     fun restoreFolder() {
         val uri = prefs.getString("folder_uri", null) ?: return
         val fs = try {
-            SafFs(getApplication(), Uri.parse(uri))
+            buildFs(getApplication(), Uri.parse(uri))
         } catch (e: Exception) {
             // SAF grant revoked (e.g. permission removed or app data cleared):
             // SafFs throws in its constructor. Clear the stale prefs and fall
@@ -45,6 +52,33 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         }
         _fs = fs
         if (fs != null) _controller = SyncController(getApplication(), fs, store)
+    }
+
+    /** Rebuilds the Fs (and controller) after the audio permission is granted, so the fast path activates. */
+    fun refreshFs() {
+        val uri = prefs.getString("folder_uri", null) ?: return
+        val app = getApplication<Application>()
+        try {
+            val fs = buildFs(app, Uri.parse(uri))
+            _fs = fs
+            _controller = SyncController(app, fs, store)
+        } catch (e: Exception) {
+            // Grant is optional: keep the existing (slow) setup if the rebuild fails.
+        }
+    }
+
+    private fun buildFs(app: Application, uri: Uri): Fs {
+        val saf = SafFs(app, uri)
+        return fastLister(app, uri)?.let { HybridFs(saf, it, store) } ?: saf
+    }
+
+    /** MediaStore fast list, only when the audio permission is held (Android 13+). */
+    private fun fastLister(app: Application, uri: Uri): MediaStoreLister? {
+        if (Build.VERSION.SDK_INT < 33) return null
+        if (ContextCompat.checkSelfPermission(app, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) return null
+        val treeId = try { DocumentsContract.getTreeDocumentId(uri) } catch (e: Exception) { return null }
+        val (volume, relPath) = volumeAndPath(treeId) ?: return null
+        return MediaStoreLister(app, volume, relPath)
     }
 
     override fun onCleared() {

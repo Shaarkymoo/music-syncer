@@ -49,9 +49,18 @@ phones home.
   - `POST_NOTIFICATIONS` — optional notifications (you may deny it).
   - `REQUEST_INSTALL_PACKAGES` — only used when **you** tap "Check for update"
     and confirm an install.
-  - **No storage permission, no contacts, no location, no SMS, nothing else.**
+  - `READ_MEDIA_AUDIO` (Android 13+, **runtime, optional**) — a read-only view
+    of the device's audio index (MediaStore). It is used **only** to list the
+    music in the folder you picked, instantly. If you deny or revoke it, the
+    app still works — syncs just use the slower SAF folder walk. No write
+    access comes with it.
+  - **No storage (all-files) permission, no contacts, no location, no SMS,
+    nothing else.**
 - **Folder access** is via the system SAF picker — Android grants the app
   read/write **only** to the folder you choose. There is no "all files access".
+- **With `READ_MEDIA_AUDIO` granted**, the app queries the audio index for
+  files under that same folder's path and ignores every other audio file it
+  can see (voice notes, other apps' music, etc.) — it never touches them.
 - The app can **rename/move/delete/edit tags** on files inside that folder —
   that is its job. It never touches anything outside it.
 
