@@ -1,5 +1,6 @@
 package com.musicsyncer.engine
 
+import java.io.IOException
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -7,8 +8,13 @@ import java.nio.file.StandardCopyOption
 
 data class FsEntry(val rel: String, val size: Long, val mtimeNs: Long)
 
+/** One direct child of a directory listing: a subdirectory or a file. */
+data class FsDirEntry(val rel: String, val isDirectory: Boolean, val size: Long, val mtimeNs: Long)
+
 interface Fs {
     fun list(): List<FsEntry>
+    /** Lists the DIRECT children of [rel] ("" = root): subdirectories AND files, one level only. */
+    fun listDir(rel: String): List<FsDirEntry>
     fun stat(rel: String): FsEntry
     fun read(rel: String): ByteArray
     fun openRead(rel: String): InputStream
@@ -34,6 +40,25 @@ class PathFs(private val root: Path) : Fs {
                 val rel = root.relativize(p).toString().replace('\\', '/')
                 val st = Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes::class.java)
                 out.add(FsEntry(rel, st.size(), st.lastModifiedTime().to(java.util.concurrent.TimeUnit.NANOSECONDS)))
+            }
+        }
+        return out
+    }
+
+    override fun listDir(rel: String): List<FsDirEntry> {
+        val dir = resolve(rel)
+        if (!Files.isDirectory(dir)) throw IOException("not a directory: $rel")
+        val out = mutableListOf<FsDirEntry>()
+        Files.list(dir).use { stream ->
+            stream.forEach { p ->
+                val name = p.fileName.toString()
+                val childRel = if (rel.isEmpty()) name else "$rel/$name"
+                if (Files.isRegularFile(p)) {
+                    val st = Files.readAttributes(p, java.nio.file.attribute.BasicFileAttributes::class.java)
+                    out.add(FsDirEntry(childRel, false, st.size(), st.lastModifiedTime().to(java.util.concurrent.TimeUnit.NANOSECONDS)))
+                } else if (Files.isDirectory(p)) {
+                    out.add(FsDirEntry(childRel, true, 0L, 0L))
+                }
             }
         }
         return out

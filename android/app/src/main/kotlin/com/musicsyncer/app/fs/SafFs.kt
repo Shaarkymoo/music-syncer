@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import com.musicsyncer.engine.Fs
+import com.musicsyncer.engine.FsDirEntry
 import com.musicsyncer.engine.FsEntry
 import java.io.IOException
 import java.io.InputStream
@@ -35,6 +36,21 @@ class SafFs(private val context: Context, treeUri: Uri) : Fs {
             }
         }
         walk(root, "")
+        return out
+    }
+
+    override fun listDir(rel: String): List<FsDirEntry> {
+        val dir = doc(rel) ?: throw IOException("not found: $rel")
+        val out = mutableListOf<FsDirEntry>()
+        for (child in dir.listFiles()) {
+            val name = child.name ?: continue
+            val childRel = if (rel.isEmpty()) name else "$rel/$name"
+            if (child.isDirectory) {
+                out.add(FsDirEntry(childRel, true, 0L, 0L))
+            } else if (child.isFile) {
+                out.add(FsDirEntry(childRel, false, child.length(), child.lastModified() * 1_000_000))
+            }
+        }
         return out
     }
 

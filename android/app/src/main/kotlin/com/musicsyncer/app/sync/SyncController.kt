@@ -37,6 +37,7 @@ data class ProgressState(
 /** Human-readable phase label for the status UI. */
 fun SyncPhase.displayName(): String = when (this) {
     SyncPhase.SCAN -> "Scanning phone"
+    SyncPhase.ADOPT -> "Matching files with laptop"
     SyncPhase.PLAN -> "Syncing with laptop"
     SyncPhase.TRANSFER -> "Transferring with laptop"
     SyncPhase.DONE -> "Final check"

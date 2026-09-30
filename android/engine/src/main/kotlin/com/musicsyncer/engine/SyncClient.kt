@@ -85,8 +85,13 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
     //      then refresh our manifest so both plans see the adopted shas.
     //      Paths with an unseen local MODIFY are skipped: a same-size rewrite
     //      must not be frozen to the server's stale sha.
+    //      exists = { true }: the scan just above made the manifest an exact disk
+    //      snapshot (missing files were journaled DELETE and removed), so the
+    //      manifestGet non-null check inside adoptShas is existence proof. A
+    //      per-path SAF exists() would be a ~200ms ContentResolver round-trip —
+    //      ~6050 of them ≈ 20 min of frozen UI on the first sync.
     val recentlyModified = ourOps.filter { it.op == "MODIFY" && it.device == ourDevice }.map { it.path }.toSet()
-    adoptShas(store, serverManifest, fs, nowNs, recentlyModified)
+    adoptShas(store, serverManifest, fs, nowNs, recentlyModified, exists = { true }, progress = counting)
     ourManifest = store.manifestAll().associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) }
 
     // 4. OUR plan: peer_cursor = how much of OUR journal the server has seen.

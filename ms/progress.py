@@ -6,6 +6,8 @@ from typing import Callable
 
 class SyncPhase(Enum):
     SCAN = "SCAN"
+    ADOPT = "ADOPT"  # Kotlin client emits this during sha adoption; the laptop
+    # adoption (ms/adopt.py) is cheap on a real filesystem, so Python never does.
     PLAN = "PLAN"
     TRANSFER = "TRANSFER"
     DONE = "DONE"

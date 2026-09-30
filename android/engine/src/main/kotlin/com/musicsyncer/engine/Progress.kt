@@ -1,7 +1,7 @@
 package com.musicsyncer.engine
 
 /** Live progress reporting for scan/sync sessions (consumed by the app UI). */
-enum class SyncPhase { SCAN, PLAN, TRANSFER, DONE }
+enum class SyncPhase { SCAN, ADOPT, PLAN, TRANSFER, DONE }
 
 /** (phase, done, total, current_rel) — done is 1-based, total is the phase's file count, current_rel is the file being processed ("" if none). */
 fun interface ProgressListener {

@@ -115,4 +115,18 @@ class MergeTest {
         assertEquals(emptyList<String>(), adoptShas(store, remote, PathFs(root), 4, setOf("A.mp3")))
         assertEquals(null, store.manifestGet("A.mp3")?.sha256)
     }
+
+    @Test fun adoptShasHonorsExistsPredicate() {
+        val root = dir.resolve("root"); Files.createDirectories(root)
+        Files.write(root.resolve("A.mp3"), "content-a".encodeToByteArray())
+        val store = JdbcStore("jdbc:sqlite:${dir.resolve("adopt-exists.db")}")
+        store.manifestUpsert("A.mp3", 9, 1, null, 1)  // lazy scan: NULL sha
+        val remote = mapOf("A.mp3" to Triple(9L, 1L, "remotesha"))
+        // The phone passes exists = { true } because its post-scan manifest is the
+        // disk snapshot; a per-path SAF exists() would cost ~200ms each.
+        assertEquals(emptyList<String>(), adoptShas(store, remote, PathFs(root), 2, exists = { false }))
+        assertEquals(null, store.manifestGet("A.mp3")?.sha256)
+        assertEquals(listOf("A.mp3"), adoptShas(store, remote, PathFs(root), 2, exists = { true }))
+        assertEquals("remotesha", store.manifestGet("A.mp3")?.sha256)
+    }
 }

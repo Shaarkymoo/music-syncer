@@ -93,18 +93,16 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
     val currentDir = if (moveRel != null) moveTargetDir else dir
 
     val entries by produceState(initialValue = emptyList<BrowserEntry>(), currentDir, refreshTick, fs) {
-        value = withContext(Dispatchers.IO) {
-            val prefix = dirPrefix(currentDir)
-            val all = runCatching { fs.list() }.getOrDefault(emptyList())
-            val dirs = all.filter { it.rel.startsWith(prefix) && '/' in it.rel.removePrefix(prefix) }
-                .map { BrowserEntry.Dir(it.rel.removePrefix(prefix).substringBefore('/')) }
-                .distinctBy { it.name }
-                .sortedBy { it.name }
-            val songs = all.filter { it.rel.startsWith(prefix) && '/' !in it.rel.removePrefix(prefix) }
-                .map { BrowserEntry.Song(it) }
-                .sortedBy { it.entry.rel }
-            dirs + songs
-        }
+        val result = withContext(Dispatchers.IO) { runCatching { fs.listDir(currentDir) } }
+        result.exceptionOrNull()?.let { error = it.message ?: "Failed to list folder" }
+        val children = result.getOrDefault(emptyList())
+        val songs = children.filter { !it.isDirectory }
+            .map { BrowserEntry.Song(FsEntry(it.rel, it.size, it.mtimeNs)) }
+            .sortedBy { it.entry.rel }
+        val dirs = children.filter { it.isDirectory }
+            .map { BrowserEntry.Dir(it.rel.substringAfterLast('/')) }
+            .sortedBy { it.name }
+        value = dirs + songs
     }
 
     fun navigateTo(target: String) {

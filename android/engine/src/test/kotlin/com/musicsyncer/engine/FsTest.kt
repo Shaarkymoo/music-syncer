@@ -1,5 +1,6 @@
 package com.musicsyncer.engine
 
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -47,6 +48,21 @@ class FsTest {
         assertEquals("Rock/A.mp3", entry.rel)
         assertEquals(3L, entry.size)
         assertTrue(entry.mtimeNs > 0)
+    }
+
+    @Test
+    fun listDirReturnsSingleLevelFilesAndDirs() {
+        val fs = PathFs(dir)
+        fs.write("Rock/A.mp3", byteArrayOf(1))
+        fs.write("Rock/sub/B.mp3", byteArrayOf(2))
+        fs.write("C.mp3", byteArrayOf(1, 2, 3))
+        val rootEntries = fs.listDir("").sortedBy { it.rel }
+        assertEquals(listOf("C.mp3", "Rock"), rootEntries.map { it.rel })
+        assertEquals(listOf(false, true), rootEntries.map { it.isDirectory })
+        assertEquals(3L, rootEntries.first { it.rel == "C.mp3" }.size)
+        val rockEntries = fs.listDir("Rock").sortedBy { it.rel }
+        assertEquals(listOf("Rock/A.mp3", "Rock/sub"), rockEntries.map { it.rel })
+        assertThrows(IOException::class.java) { fs.listDir("nope") }
     }
 
     @Test
