@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import secrets
+import sys
 import threading
 import time
 import urllib.parse
@@ -15,6 +16,10 @@ PARTIAL_PREFIX = ".ms-partial-"
 SCHEMA_VERSION = 1
 # Keep in sync with android/app/build.gradle.kts versionName.
 APP_VERSION = "0.1.0"
+
+# Per-request start time so log_message can report handler duration. The
+# server is threaded, so this must be thread-local.
+_req_start = threading.local()
 
 
 def _safe_join(root: Path, rel: str) -> Path | None:
@@ -46,8 +51,26 @@ class SyncServer:
         server = self
 
         class Handler(BaseHTTPRequestHandler):
-            def log_message(self, *args):  # silence
-                pass
+            def log_message(self, format, *args):
+                # BaseHTTPRequestHandler funnels every request/error here:
+                # log_request passes (requestline, code, size); log_error
+                # passes (code, message) or a free-form message. Nothing
+                # fails silently: every line goes to stderr, stdout stays
+                # clean for journal/scan output.
+                if format == '"%s" %s %s':
+                    parts = args[0].split()
+                    method = parts[0]
+                    path = parts[1] if len(parts) > 1 else args[0]
+                    dur = ""
+                    start = getattr(_req_start, "t", None)
+                    if start is not None:
+                        dur = f" ({int((time.time() - start) * 1000)} ms)"
+                    sys.stderr.write(
+                        f"[{time.strftime('%H:%M:%S')}] {method} {path} -> {args[1]}{dur}\n")
+                elif format.startswith("code %d"):
+                    pass  # send_error duplicates the request line above
+                else:
+                    sys.stderr.write(f"[{time.strftime('%H:%M:%S')}] {format % args}\n")
 
             def _send_json(self, obj, code=200):
                 body = json.dumps(obj).encode()
@@ -58,6 +81,7 @@ class SyncServer:
                 self.wfile.write(body)
 
             def do_GET(self):
+                _req_start.t = time.time()
                 parsed = urllib.parse.urlparse(self.path)
                 qs = urllib.parse.parse_qs(parsed.query)
                 try:
@@ -108,9 +132,11 @@ class SyncServer:
                     else:
                         self.send_error(404)
                 except Exception as e:  # pragma: no cover
+                    self.log_error("ERROR %s: %s", parsed.path, e)
                     self._send_json({"error": str(e)}, 500)
 
             def do_POST(self):
+                _req_start.t = time.time()
                 parsed = urllib.parse.urlparse(self.path)
                 qs = urllib.parse.parse_qs(parsed.query)
                 length = int(self.headers.get("Content-Length", 0))
@@ -177,6 +203,7 @@ class SyncServer:
                     else:
                         self.send_error(404)
                 except Exception as e:  # pragma: no cover
+                    self.log_error("ERROR %s: %s", parsed.path, e)
                     self._send_json({"error": str(e)}, 500)
 
         return Handler

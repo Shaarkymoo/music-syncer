@@ -127,3 +127,32 @@ def test_post_file_rejects_empty_path(server):
     # No stray partial file may be written (e.g. in the parent of the root).
     assert not list(server.root.parent.glob(f".ms-partial-*"))
     assert not list(server.root.glob(f".ms-partial-*"))
+
+
+def test_request_logged_to_stderr(server, capsys):
+    _get(f"http://127.0.0.1:{server.port}/version")
+    err = capsys.readouterr().err
+    assert "/version" in err
+    assert "200" in err
+
+
+def test_404_logged_to_stderr(server, capsys):
+    import urllib.error
+    with pytest.raises(urllib.error.HTTPError):
+        urllib.request.urlopen(f"http://127.0.0.1:{server.port}/no-such-endpoint")
+    err = capsys.readouterr().err
+    assert "/no-such-endpoint" in err
+    assert "404" in err
+
+
+def test_exception_logged_to_stderr(server, capsys):
+    import urllib.error
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{server.port}/sync", data=b"{not json",
+        headers={"Content-Type": "application/json"}, method="POST")
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req)
+    assert exc.value.code == 500
+    err = capsys.readouterr().err
+    assert "ERROR" in err
+    assert "/sync" in err
