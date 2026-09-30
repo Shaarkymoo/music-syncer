@@ -59,4 +59,25 @@ class MediaStoreHelpersTest {
         baselineMtimes(store, listOf(FsEntry("ghost.mp3", 100, 1L)))
         assertEquals(0L, store.journalHead())
     }
+
+    @Test fun rowToEntryStripsFolderPrefix() {
+        val e = mediaStoreRowToEntry("my songs", "my songs/engsongs/", "A.mp3", 100, 1_700_000_000L)
+        assertEquals("engsongs/A.mp3", e?.rel) // folder-relative, like the manifest
+        assertEquals(100L, e?.size)
+        assertEquals(1_700_000_000_000_000_000L, e?.mtimeNs) // seconds -> ns
+    }
+
+    @Test fun rowToEntryHandlesTopLevelFile() {
+        val e = mediaStoreRowToEntry("my songs", "my songs/", "B.mp3", 5, 2L)
+        assertEquals("B.mp3", e?.rel)
+    }
+
+    @Test fun rowToEntryRejectsOutsideFolder() {
+        assertEquals(null, mediaStoreRowToEntry("my songs", "Music/", "C.mp3", 5, 2L))
+    }
+
+    @Test fun rowToEntryRejectsNamelessAndUnknownSize() {
+        assertEquals(null, mediaStoreRowToEntry("my songs", "my songs/", null, 5, 2L))
+        assertEquals(null, mediaStoreRowToEntry("my songs", "my songs/", "D.mp3", -1, 2L))
+    }
 }

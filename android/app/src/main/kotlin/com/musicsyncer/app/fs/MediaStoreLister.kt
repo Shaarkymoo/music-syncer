@@ -2,6 +2,7 @@ package com.musicsyncer.app.fs
 
 import android.content.Context
 import android.provider.MediaStore
+import android.util.Log
 import com.musicsyncer.engine.FsEntry
 
 /**
@@ -18,6 +19,25 @@ internal fun volumeAndPath(treeDocumentId: String): Pair<String, String>? {
 }
 
 /**
+ * Maps a MediaStore audio row to an engine FsEntry whose rel is relative to
+ * the picked folder ([relPath]) — e.g. folder "my songs", row path
+ * "my songs/engsongs/A.mp3" -> rel "engsongs/A.mp3". Rows outside the folder,
+ * nameless rows, or unknown-size rows map to null.
+ */
+internal fun mediaStoreRowToEntry(
+    relPath: String,
+    relativePath: String?,
+    displayName: String?,
+    size: Long,
+    mtimeSeconds: Long,
+): FsEntry? {
+    if (displayName == null || size < 0) return null
+    val full = "${relativePath ?: ""}$displayName" // RELATIVE_PATH ends with '/'
+    if (relPath.isNotEmpty() && !full.startsWith("$relPath/")) return null
+    return FsEntry(full.removePrefix("$relPath/"), size, mtimeSeconds * 1_000_000_000)
+}
+
+/**
  * Fast audio enumeration from the MediaStore index (needs READ_MEDIA_AUDIO,
  * Android 13+). Returns every indexed audio file under [relPath] on the
  * [volumeId] volume as engine FsEntries (mtime at second precision). Files the
@@ -26,8 +46,8 @@ internal fun volumeAndPath(treeDocumentId: String): Pair<String, String>? {
  */
 class MediaStoreLister(
     private val context: Context,
-    private val volumeId: String,
-    private val relPath: String,
+    val volumeId: String,
+    val relPath: String,
 ) {
     fun list(): List<FsEntry> {
         val projection = arrayOf(
@@ -39,6 +59,7 @@ class MediaStoreLister(
         val selection = "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ?"
         val args = arrayOf("$relPath/%")
         val out = mutableListOf<FsEntry>()
+        val t0 = System.nanoTime()
         context.contentResolver.query(
             MediaStore.Audio.Media.getContentUri(volumeId),
             projection, selection, args, null,
@@ -48,15 +69,18 @@ class MediaStoreLister(
             val mtimeCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_MODIFIED)
             val pathCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.RELATIVE_PATH)
             while (c.moveToNext()) {
-                val name = c.getString(nameCol) ?: continue
-                val size = c.getLong(sizeCol)
-                if (size < 0) continue
-                val relativePath = c.getString(pathCol) ?: ""
-                val rel = "$relativePath$name" // RELATIVE_PATH ends with '/'
-                if (relPath.isNotEmpty() && !rel.startsWith("$relPath/")) continue
-                out.add(FsEntry(rel, size, c.getLong(mtimeCol) * 1_000_000_000))
+                mediaStoreRowToEntry(
+                    relPath,
+                    c.getString(pathCol),
+                    c.getString(nameCol),
+                    c.getLong(sizeCol),
+                    c.getLong(mtimeCol),
+                )?.let { out.add(it) }
             }
         }
+        Log.i(TAG, "list(volume=$volumeId, relPath=$relPath) -> ${out.size} rows in ${(System.nanoTime() - t0) / 1_000_000}ms; sample=${out.take(3).map { it.rel }}")
         return out.distinctBy { it.rel }
     }
+
+    private companion object { const val TAG = "MusicSyncer" }
 }

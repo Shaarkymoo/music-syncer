@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
+import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import com.musicsyncer.app.fs.HybridFs
@@ -69,7 +70,9 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun buildFs(app: Application, uri: Uri): Fs {
         val saf = SafFs(app, uri)
-        return fastLister(app, uri)?.let { HybridFs(saf, it, store) } ?: saf
+        val lister = fastLister(app, uri)
+        Log.i(TAG, if (lister != null) "buildFs: HybridFs active (volume=${lister.volumeId}, relPath=${lister.relPath})" else "buildFs: plain SafFs (no fast path)")
+        return lister?.let { HybridFs(saf, it, store) } ?: saf
     }
 
     /** MediaStore fast list, only when the audio permission is held (Android 13+). */
@@ -84,4 +87,6 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         discovery.close()
     }
+
+    private companion object { const val TAG = "MusicSyncer" }
 }

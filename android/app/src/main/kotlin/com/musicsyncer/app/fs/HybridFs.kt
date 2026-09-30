@@ -1,5 +1,6 @@
 package com.musicsyncer.app.fs
 
+import android.util.Log
 import com.musicsyncer.engine.Fs
 import com.musicsyncer.engine.FsDirEntry
 import com.musicsyncer.engine.FsEntry
@@ -25,14 +26,18 @@ class HybridFs(
     private val store: SyncStore,
 ) : Fs {
     override fun list(): List<FsEntry> {
+        val t0 = System.nanoTime()
         val listed = lister.list().associateBy { it.rel }.toMutableMap()
+        var fallback = 0
         for (m in store.manifestAll()) {
             if (m.path in listed) continue
             if (saf.exists(m.path)) {
                 listed[m.path] = saf.stat(m.path) // index lag: keep the row alive
+                fallback++
             }
         }
         baselineMtimes(store, listed.values.toList())
+        Log.i(TAG, "HybridFs.list: ${listed.size} total (${fallback} SAF-fallback) in ${(System.nanoTime() - t0) / 1_000_000}ms")
         return listed.values.toList()
     }
 
@@ -45,6 +50,8 @@ class HybridFs(
     override fun delete(rel: String) = saf.delete(rel)
     override fun rename(rel: String, newRel: String) = saf.rename(rel, newRel)
     override fun exists(rel: String): Boolean = saf.exists(rel)
+
+    private companion object { const val TAG = "MusicSyncer" }
 }
 
 /**
