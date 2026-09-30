@@ -20,11 +20,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
@@ -33,6 +33,7 @@ import com.musicsyncer.app.BuildConfig
 import com.musicsyncer.app.MusicViewModel
 import com.musicsyncer.app.sync.ProgressState
 import com.musicsyncer.app.sync.SyncState
+import com.musicsyncer.engine.SyncPhase
 import com.musicsyncer.app.sync.Updater
 import com.musicsyncer.app.sync.displayName
 import com.musicsyncer.app.sync.isNewerVersion
@@ -58,7 +59,11 @@ fun StatusScreen(vm: MusicViewModel) {
             Text("Last sync: ${s.lastSync ?: "-"}")
             Text("Summary: ${s.lastSummary ?: "-"}")
             s.error?.let { Text("Error: $it") }
-            if (s.busy || s.progress != null) ProgressCard(s.progress)
+            if (s.discovering) {
+                DiscoveryLine()
+            } else if (s.busy || s.progress != null) {
+                ProgressCard(s.progress)
+            }
         }
         vm.controller?.let { c ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -66,7 +71,7 @@ fun StatusScreen(vm: MusicViewModel) {
                 Button(onClick = { c.sync(c.state.value.server) }, enabled = !(state?.busy ?: false)) { Text("Sync") }
                 Button(onClick = { c.verify() }, enabled = !(state?.busy ?: false)) { Text("Verify") }
             }
-            Button(onClick = { scope.launch { discoverAndSync(vm) } }, enabled = !(state?.busy ?: false)) { Text("Find laptop & sync") }
+            Button(onClick = { c.discover { vm.discovery.find() } }, enabled = !(state?.busy ?: false)) { Text("Find laptop & sync") }
             TextButton(onClick = {
                 scope.launch {
                     val url = c.state.value.server
@@ -102,36 +107,94 @@ fun StatusScreen(vm: MusicViewModel) {
     }
 }
 
-/** Live progress card: phase label, overall + sub bars, counts, and the file currently being worked on. */
+/** tqdm-style live progress card: phase (with stage timing), playlist, and song bars. */
 @Composable
 private fun ProgressCard(progress: ProgressState?) {
+    // Per-playlist song counts within the current phase, derived from `rel` (UI-side).
+    val playlistCounts = remember { mutableStateMapOf<String, Int>() }
+    var lastRel by remember { mutableStateOf<String?>(null) }
+    var lastPhase by remember { mutableStateOf<SyncPhase?>(null) }
+
+    if (progress != null && progress.phase != lastPhase) {
+        playlistCounts.clear()
+        lastPhase = progress.phase
+        lastRel = null
+    }
+    if (progress != null && progress.rel.isNotBlank() && progress.rel != lastRel) {
+        val parent = progress.rel.substringBeforeLast('/', "")
+        playlistCounts[parent] = (playlistCounts[parent] ?: 0) + 1
+        lastRel = progress.rel
+    }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Bar 1 — phase + per-stage elapsed time.
+            val phaseLabel = progress?.phase?.displayName() ?: "Working"
             Text(
-                text = progress?.phase?.displayName() ?: "Working",
+                text = "$phaseLabel · ${formatElapsed(progress?.elapsedMs ?: 0L)}",
                 style = MaterialTheme.typography.titleMedium,
             )
             val fraction = progress?.let { if (it.total <= 0) 0f else it.done.toFloat() / it.total } ?: 0f
-            ProgressBar(fraction, indeterminate = progress == null)
-            ProgressBar(fraction, indeterminate = progress == null)
-            if (progress != null) {
+            ProgressBar(fraction, indeterminate = progress == null || progress.total <= 0)
+
+            // Bar 2 — playlist (parent dir of the current file).
+            if (progress == null || progress.rel.isBlank()) {
                 Text(
-                    text = "${progress.done} / ${progress.total}",
+                    text = "walking folder tree…",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                val workingOn = progress.rel.ifBlank { "${progress.phase.displayName()}…" }
+                ProgressBar(0f, indeterminate = true)
+            } else {
+                val parent = progress.rel.substringBeforeLast('/', "")
+                val playlist = parent.ifBlank { "root" }
+                val seen = playlistCounts[parent] ?: 0
                 Text(
-                    text = "Now working on: $workingOn",
+                    text = "on playlist: $playlist · $seen song${if (seen == 1) "" else "s"}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
+                ProgressBar(0f, indeterminate = true)
             }
+
+            // Bar 3 — song (basename of the current file) + phase counts.
+            if (progress == null || progress.rel.isBlank()) {
+                Text(
+                    text = "walking folder tree…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ProgressBar(0f, indeterminate = true)
+            } else {
+                val song = progress.rel.substringAfterLast('/')
+                Text(
+                    text = "on song $song · ${progress.done}/${progress.total}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                ProgressBar(fraction, indeterminate = progress.total <= 0)
+            }
+        }
+    }
+}
+
+/** Indeterminate "looking for laptop" line shown while mDNS discovery runs. */
+@Composable
+private fun DiscoveryLine() {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Looking for laptop…", style = MaterialTheme.typography.titleMedium)
+            ProgressBar(0f, indeterminate = true)
         }
     }
 }
@@ -147,15 +210,10 @@ private fun ProgressBar(fraction: Float, indeterminate: Boolean) {
     }
 }
 
-/** Runs mDNS discovery on a coroutine, then points the controller at the found laptop and syncs. */
-private suspend fun discoverAndSync(vm: MusicViewModel) {
-    val url = vm.discovery.find()
-    if (url != null) {
-        vm.controller?.let { c ->
-            c.setServer(url)
-            c.sync(url)
-        }
-    }
+/** mm:ss elapsed time for the current stage. */
+private fun formatElapsed(ms: Long): String {
+    val totalSec = ms / 1000
+    return "%d:%02d".format(totalSec / 60, totalSec % 60)
 }
 
 /** Null-initialized stable state used before a folder is picked (no controller yet). */
