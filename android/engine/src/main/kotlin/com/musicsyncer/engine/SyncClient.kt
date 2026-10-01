@@ -37,7 +37,8 @@ private fun httpBytes(client: OkHttpClient, url: String, method: String = "GET",
     }
 }
 
-fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: String, progress: ProgressListener? = null): SyncSummary {
+fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: String, progress: ProgressListener? = null,
+                   cancel: () -> Boolean = { false }): SyncSummary {
     val client = OkHttpClient()
     // Wall-clock epoch-ns (Python uses time.time_ns()); System.nanoTime() is
     // monotonic-since-boot and incomparable across devices, which would break
@@ -62,7 +63,8 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
     val serverCursorForUs = hs.clientCursor  // server.sync_state[us]
 
     // 2. Local scan, then gather our state.
-    scan(fs, store, ourDevice, nowNs, counting)
+    scan(fs, store, ourDevice, nowNs, counting, cancel)
+    if (cancel()) throw SyncCancelledException()
     val ourCursor = store.syncStateGet(serverDevice)?.lastSeenJournalId ?: 0L  // what we've seen of server
     val ourOps = store.journalSince(serverCursorForUs)
     var ourManifest = store.manifestAll().associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) }
@@ -91,7 +93,7 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
     //      per-path SAF exists() would be a ~200ms ContentResolver round-trip —
     //      ~6050 of them ≈ 20 min of frozen UI on the first sync.
     val recentlyModified = ourOps.filter { it.op == "MODIFY" && it.device == ourDevice }.map { it.path }.toSet()
-    adoptShas(store, serverManifest, fs, nowNs, recentlyModified, exists = { true }, progress = counting)
+    adoptShas(store, serverManifest, fs, nowNs, recentlyModified, exists = { true }, progress = counting, cancel = cancel)
     ourManifest = store.manifestAll().associate { it.path to Triple(it.size, it.mtimeNs, it.sha256) }
 
     // 4. OUR plan: peer_cursor = how much of OUR journal the server has seen.
@@ -99,7 +101,7 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
     val planItems = plan.fetch.map { it.first } + plan.delete + plan.conflictLoser.map { it.first }
     for ((i, rel) in planItems.withIndex()) emit(progress, SyncPhase.PLAN, i + 1, planItems.size, "")
     val remoteOps = serverOps.associate { it.path to it.op }
-    val applied = applyPlan(fs, store, plan, ourDevice, serverDevice, remoteOps, nowNs, progress) { rel ->
+    val applied = applyPlan(fs, store, plan, ourDevice, serverDevice, remoteOps, nowNs, progress, cancel) { rel ->
         httpBytes(client, "$serverUrl/file?path=${URLEncoder.encode(rel, "UTF-8")}")
     }
 
@@ -115,6 +117,7 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
     )
     val pushed = mutableListOf<String>()
     for ((i, item) in serverPlan.fetch.withIndex()) {
+        if (cancel()) throw SyncCancelledException()
         val (rel, _size, sha) = item
         emit(progress, SyncPhase.TRANSFER, i + 1, serverPlan.fetch.size, rel)
         val data = fs.read(rel)

@@ -40,6 +40,7 @@ fun applyPlan(
     fs: Fs, store: SyncStore, plan: Plan, ourDevice: String, remoteDevice: String,
     remoteOps: Map<String, String>, nowNs: Long,
     progress: ProgressListener? = null,
+    isCancelled: () -> Boolean = { false },
     fetchBytes: (String) -> ByteArray,
 ): ApplySummary {
     val summary = ApplySummary()
@@ -63,6 +64,7 @@ fun applyPlan(
 
     val fetchResults = arrayOfNulls<FetchResult>(fetchItems.size)
     runParallel(fetchItems.size) { i ->
+        if (isCancelled()) throw SyncCancelledException()
         val item = fetchItems[i]
         val r = processFetch(fs, localShaToPath, fetchBytes, item)
         synchronized(doneLock) {
@@ -98,6 +100,7 @@ fun applyPlan(
     // --- deletes last ---
     val deletedFlags = arrayOfNulls<Boolean>(deleteItems.size)
     runParallel(deleteItems.size) { i ->
+        if (isCancelled()) throw SyncCancelledException()
         val rel = deleteItems[i]
         val deleted = if (fs.exists(rel)) { fs.delete(rel); true } else false
         synchronized(doneLock) {

@@ -23,9 +23,9 @@ class ProgressTest {
             Files.write(dir.resolve("root/$name"), byteArrayOf(1))
         }
         val events = mutableListOf<Event>()
-        scan(fs(), store(), "laptop", 1) { phase, done, total, rel ->
+        scan(fs(), store(), "laptop", 1, progress = { phase, done, total, rel ->
             events.add(Event(phase, done, total, rel))
-        }
+        })
         val fileEvents = events.drop(1)  // skip the (SCAN, 0, 0, "") walk marker
         assertEquals(listOf(SyncPhase.SCAN, SyncPhase.SCAN, SyncPhase.SCAN), fileEvents.map { it.phase })
         assertEquals(listOf(1, 2, 3), fileEvents.map { it.done })  // 1-based, monotonically increasing
@@ -40,9 +40,9 @@ class ProgressTest {
             Files.write(dir.resolve("root/$name"), byteArrayOf(1))
         }
         val events = mutableListOf<Event>()
-        scan(fs(), store(), "laptop", 1) { phase, done, total, rel ->
+        scan(fs(), store(), "laptop", 1, progress = { phase, done, total, rel ->
             events.add(Event(phase, done, total, rel))
-        }
+        })
         assertEquals(Event(SyncPhase.SCAN, 0, 0, ""), events.first())  // walk marker before fs.list()
         assertEquals(listOf(1, 2, 3), events.drop(1).map { it.done })  // per-file events unchanged
     }
@@ -53,7 +53,7 @@ class ProgressTest {
         for (name in listOf("a.mp3", "b.mp3")) {
             Files.write(dir.resolve("root/$name"), byteArrayOf(1))
         }
-        val head = scan(fs(), store(), "laptop", 1) { _, _, _, _ -> throw RuntimeException("callback bug") }
+        val head = scan(fs(), store(), "laptop", 1, progress = { _, _, _, _ -> throw RuntimeException("callback bug") })
         assertTrue(head > 0)  // a raising callback must never break the engine
     }
 
@@ -68,9 +68,9 @@ class ProgressTest {
         srv.start()
         try {
             val events = mutableListOf<Event>()
-            runSyncSession("http://127.0.0.1:${srv.port}", PathFs(rootB), store(), "phone") { phase, done, total, rel ->
+            runSyncSession("http://127.0.0.1:${srv.port}", PathFs(rootB), store(), "phone", progress = { phase, done, total, rel ->
                 events.add(Event(phase, done, total, rel))
-            }
+            })
             assertTrue(events.any { it.phase == SyncPhase.TRANSFER })  // a file transferred
             assertTrue(events.any { it.phase == SyncPhase.DONE })      // session ended
             assertEquals("content-a", Files.readString(rootB.resolve("Rock/A.mp3")))

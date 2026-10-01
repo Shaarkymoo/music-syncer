@@ -6,7 +6,7 @@ from typing import Callable
 from ms import db
 from ms.hashing import sha256_file
 from ms.merge import Plan
-from ms.progress import Progress, SyncPhase, emit
+from ms.progress import Progress, SyncCancelled, SyncPhase, emit
 
 PARTIAL_PREFIX = ".ms-partial-"
 
@@ -28,7 +28,7 @@ def _conflict_name(rel: str, ts_ns: int) -> str:
 def apply_plan(root: Path, plan: Plan, conn, our_device: str, remote_device: str,
                remote_ops: dict[str, str], now_ns: int,
                fetch_bytes: Callable[[str], bytes],
-               progress: Progress | None = None) -> dict:
+               progress: Progress | None = None, cancel=None) -> dict:
     summary: dict = {"fetched": [], "copied": [], "deleted": [], "conflicts": []}
 
     # Local sha lookup for content-addressed skip.
@@ -55,6 +55,8 @@ def apply_plan(root: Path, plan: Plan, conn, our_device: str, remote_device: str
 
         # --- fetches (writes) ---
         for rel, _size, sha in fetch_items:
+            if cancel and cancel():
+                raise SyncCancelled()
             done += 1
             emit(progress, SyncPhase.TRANSFER, done, total, rel)
             target = _resolve(root, rel)
@@ -89,6 +91,8 @@ def apply_plan(root: Path, plan: Plan, conn, our_device: str, remote_device: str
 
         # --- deletes last ---
         for rel in delete_items:
+            if cancel and cancel():
+                raise SyncCancelled()
             done += 1
             emit(progress, SyncPhase.TRANSFER, done, total, rel)
             target = _resolve(root, rel)

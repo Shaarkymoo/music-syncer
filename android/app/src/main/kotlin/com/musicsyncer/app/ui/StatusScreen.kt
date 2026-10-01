@@ -101,6 +101,7 @@ fun StatusScreen(vm: MusicViewModel) {
                 DiscoveryLine()
             } else if (s.busy || s.progress != null) {
                 ProgressCard(s.progress, elapsedTick)
+                vm.controller?.let { c -> Button(onClick = { c.cancel() }, modifier = Modifier.fillMaxWidth()) { Text("Cancel") } }
             }
         }
         vm.controller?.let { c ->

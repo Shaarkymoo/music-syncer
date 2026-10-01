@@ -3,6 +3,9 @@ package com.musicsyncer.engine
 /** Live progress reporting for scan/sync sessions (consumed by the app UI). */
 enum class SyncPhase { SCAN, ADOPT, PLAN, TRANSFER, DONE }
 
+/** Thrown when the caller's cancellation flag turns true mid-session; not an error. */
+class SyncCancelledException(message: String = "Sync cancelled") : Exception(message)
+
 /** (phase, done, total, current_rel) — done is 1-based, total is the phase's file count, current_rel is the file being processed ("" if none). */
 fun interface ProgressListener {
     fun onProgress(phase: SyncPhase, done: Int, total: Int, rel: String)

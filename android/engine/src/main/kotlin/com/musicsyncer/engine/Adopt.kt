@@ -18,12 +18,14 @@ fun adoptShas(
     recentlyModified: Set<String> = emptySet(),
     exists: (String) -> Boolean = { rel -> fs.exists(rel) },
     progress: ProgressListener? = null,
+    cancel: () -> Boolean = { false },
 ): List<String> {
     val adopted = mutableListOf<String>()
     val total = remoteManifest.size
     var i = 0
     for ((path, v) in remoteManifest) {
         i++
+        if (cancel()) throw SyncCancelledException()
         emit(progress, SyncPhase.ADOPT, i, total, path)
         val sha = v.third ?: continue
         if (path in recentlyModified) continue

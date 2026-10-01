@@ -5,7 +5,7 @@ import urllib.request
 from pathlib import Path
 
 from ms import adopt, apply, db, merge, scan as scan_mod
-from ms.progress import Progress, SyncPhase, emit
+from ms.progress import Progress, SyncCancelled, SyncPhase, emit
 
 SCHEMA_VERSION = 1
 
@@ -23,7 +23,7 @@ def _http_get_bytes(url: str) -> bytes:
 
 
 def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str,
-                     progress: Progress | None = None) -> dict:
+                     progress: Progress | None = None, cancel=None) -> dict:
     conn = db.init_db(db_path)
     now_ns = time.time_ns()
 
@@ -45,7 +45,7 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     server_journal_head = hs["server_journal_head"]
 
     # 2. Local scan (fresh change detection on demand), then gather our state.
-    scan_mod.scan(root, conn, our_device, now_ns, progress=_counting)
+    scan_mod.scan(root, conn, our_device, now_ns, progress=_counting, cancel=cancel)
     our_cursor_for_server = db.sync_state_get(conn, server_device)  # what we've seen of server
     our_cursor = our_cursor_for_server[0] if our_cursor_for_server else 0
     our_ops = db.journal_since(conn, server_cursor_for_us)
@@ -68,7 +68,7 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     #      must not be frozen to the server's stale sha.
     recently_modified = {op["path"] for op in our_ops
                          if op["op"] == "MODIFY" and op["device"] == our_device}
-    adopt.adopt_shas(conn, server_manifest, root, now_ns, recently_modified)
+    adopt.adopt_shas(conn, server_manifest, root, now_ns, recently_modified, cancel=cancel)
     our_manifest = {p: (s, m, h) for (p, s, m, h, _l) in db.manifest_all(conn)}
 
     # 4. OUR plan: what we must fetch / delete / conflict-preserve.
@@ -84,7 +84,7 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     summary = apply.apply_plan(root, plan, conn, our_device, server_device, remote_ops,
                                now_ns, lambda rel: _http_get_bytes(
                                    f"{server_url}/file?path={urllib.parse.quote(rel)}"),
-                               progress=progress)
+                               progress=progress, cancel=cancel)
 
     # 5. SERVER's plan: what the server needs (fetch = push to it; delete/conflict = applied at /done).
     #    peer_cursor = how much of the SERVER's journal WE have seen.
@@ -98,6 +98,8 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
                                    server_device)
     pushed: list[str] = []
     for i, (rel, _size, sha) in enumerate(server_plan.fetch, 1):
+        if cancel and cancel():
+            raise SyncCancelled()
         emit(progress, SyncPhase.TRANSFER, i, len(server_plan.fetch), rel)
         data = (root / rel).read_bytes()
         url = f"{server_url}/file?path={urllib.parse.quote(rel)}"

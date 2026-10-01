@@ -13,6 +13,10 @@ class SyncPhase(Enum):
     DONE = "DONE"
 
 
+class SyncCancelled(Exception):
+    """Raised when the caller's cancellation callback turns true mid-session; not an error."""
+
+
 # (phase, done, total, current_rel) — done is 1-based, total is the phase's
 # file count, current_rel is the file currently being processed ("" if none).
 Progress = Callable[[SyncPhase, int, int, str], None]

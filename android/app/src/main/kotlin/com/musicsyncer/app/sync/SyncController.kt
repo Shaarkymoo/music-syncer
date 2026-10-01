@@ -3,6 +3,7 @@ package com.musicsyncer.app.sync
 import android.content.Context
 import com.musicsyncer.engine.Fs
 import com.musicsyncer.engine.ProgressListener
+import com.musicsyncer.engine.SyncCancelledException
 import com.musicsyncer.engine.SyncPhase
 import com.musicsyncer.engine.SyncStore
 import com.musicsyncer.engine.runSyncSession
@@ -59,6 +60,10 @@ class SyncController(
     )
     val state: StateFlow<SyncState> = _state
     private val scope = CoroutineScope(Dispatchers.IO)
+    private val cancelToken = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** Requests the running scan/sync/verify to stop at the next file boundary. */
+    fun cancel() { cancelToken.set(true) }
 
     private fun persist(s: SyncState) {
         prefs?.edit()
@@ -92,9 +97,12 @@ class SyncController(
     fun scan() {
         if (_state.value.busy) return
         scope.launch {
+            cancelToken.set(false)
             _state.value = _state.value.copy(busy = true, error = null)
             try {
                 runScan(progressListener())
+            } catch (e: SyncCancelledException) {
+                _state.value = _state.value.copy(lastSummary = "Cancelled").also { persist(it) }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: e.javaClass.simpleName)
             } finally {
@@ -104,16 +112,19 @@ class SyncController(
     }
 
     private suspend fun runScan(progress: ProgressListener? = null): Long = withContext(Dispatchers.IO) {
-        scan(fs, store, ourDevice, System.currentTimeMillis() * 1_000_000, progress)
+        scan(fs, store, ourDevice, System.currentTimeMillis() * 1_000_000, progress, cancel = { cancelToken.get() })
     }
 
     fun sync(serverUrl: String?) {
         if (_state.value.busy) return
         val url = serverUrl ?: _state.value.server ?: return
         scope.launch {
+            cancelToken.set(false)
             _state.value = _state.value.copy(busy = true, error = null)
             try {
                 runSync(url)
+            } catch (e: SyncCancelledException) {
+                _state.value = _state.value.copy(lastSummary = "Cancelled").also { persist(it) }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: e.javaClass.simpleName)
             } finally {
@@ -126,12 +137,15 @@ class SyncController(
     fun discover(findLaptop: suspend () -> String?) {
         if (_state.value.busy) return
         scope.launch {
+            cancelToken.set(false)
             _state.value = _state.value.copy(busy = true, discovering = true, error = null)
             try {
                 val url = findLaptop() ?: throw IllegalStateException("Laptop not found")
                 setServer(url)
                 _state.value = _state.value.copy(discovering = false)
                 runSync(url)
+            } catch (e: SyncCancelledException) {
+                _state.value = _state.value.copy(lastSummary = "Cancelled").also { persist(it) }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: e.javaClass.simpleName)
             } finally {
@@ -142,7 +156,7 @@ class SyncController(
 
     /** Shared sync body: run the session, rescan media, record the summary. */
     private suspend fun runSync(url: String) {
-        val summary = runSyncSession(url, fs, store, ourDevice, progressListener())
+        val summary = runSyncSession(url, fs, store, ourDevice, progressListener(), cancel = { cancelToken.get() })
         MediaRescan.rescan(context, summary.fetched + summary.copied + summary.deleted + summary.conflicts)
         _state.value = _state.value.copy(
             lastSync = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date()),
@@ -158,6 +172,7 @@ class SyncController(
                 runScan(progressListener())
                 val manifest = store.manifestAll()
                 val mismatches = manifest.filterIndexed { i, m ->
+                    if (cancelToken.get()) throw SyncCancelledException()
                     val elapsedMs = trackPhase(SyncPhase.SCAN, i + 1, manifest.size, m.path)
                     _state.value = _state.value.copy(progress = ProgressState(SyncPhase.SCAN, i + 1, manifest.size, m.path, elapsedMs, phaseStartNs))
                     m.sha256 != null && runCatching {

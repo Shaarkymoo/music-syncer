@@ -1,6 +1,7 @@
 package com.musicsyncer.engine
 
-fun scan(fs: Fs, store: SyncStore, deviceId: String, nowNs: Long, progress: ProgressListener? = null): Long {
+fun scan(fs: Fs, store: SyncStore, deviceId: String, nowNs: Long, progress: ProgressListener? = null,
+         cancel: () -> Boolean = { false }): Long {
     emit(progress, SyncPhase.SCAN, 0, 0, "")  // walk marker: tree walk starting
     val disk = mutableMapOf<String, FsEntry>()
     for (e in fs.list()) {
@@ -10,6 +11,7 @@ fun scan(fs: Fs, store: SyncStore, deviceId: String, nowNs: Long, progress: Prog
     }
     val total = disk.size
     for ((i, rel) in disk.keys.sorted().withIndex()) {
+        if (cancel()) throw SyncCancelledException()
         emit(progress, SyncPhase.SCAN, i + 1, total, rel)
         val e = disk.getValue(rel)
         val row = store.manifestGet(rel)

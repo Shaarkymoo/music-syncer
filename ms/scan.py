@@ -3,11 +3,14 @@ from pathlib import Path
 
 from ms import db
 from ms.hashing import fingerprint, sha256_file
-from ms.progress import Progress, SyncPhase, emit
+from typing import Callable
+
+from ms.progress import Progress, SyncCancelled, SyncPhase, emit
 
 
 def scan(root: Path, conn, device_id: str, now_ns: int,
-         progress: Progress | None = None, hash_files: bool = False) -> int:
+         progress: Progress | None = None, hash_files: bool = False,
+         cancel: Callable[[], bool] | None = None) -> int:
     """Diff disk vs manifest; journal CREATE/MODIFY/DELETE; return journal head.
 
     Lazy by default (manifest shas stay NULL — hashing 26 GB on every scan is
@@ -29,6 +32,8 @@ def scan(root: Path, conn, device_id: str, now_ns: int,
 
     total = len(disk)
     for i, rel in enumerate(sorted(disk), 1):
+        if cancel and cancel():
+            raise SyncCancelled()
         emit(progress, SyncPhase.SCAN, i, total, rel)
         path = disk[rel]
         size, mtime_ns = fingerprint(path)
