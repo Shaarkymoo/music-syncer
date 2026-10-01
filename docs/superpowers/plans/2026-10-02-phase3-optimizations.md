@@ -92,13 +92,13 @@ tests: mirror each change in tests/ + engine tests; app tests for pure logic.
 
 **Acceptance:** identical summaries/journal ordering vs sequential; a bulk-move integration test still passes; no visible behavior change.
 
-## Task 2: Parallel bulk apply (Kotlin; Python stays sequential with identical results)
+## Task 2: Parallel bulk apply + per-file progress (Kotlin; Python sequential with identical results)
 
-**Files:** `android/engine/Apply.kt` + `ApplyTest.kt`, `SyncIntegrationTest.kt`.
+**Files:** `android/engine/Apply.kt` + `ApplyTest.kt`, `SyncIntegrationTest.kt`, `ms/apply.py`.
 
-**Interfaces:** applyPlan runs fetch/copy/delete with a `ThreadPoolExecutor(4)` (or coroutines); per-file results collected with their index and re-ordered before summary/journal commit (journal order preserved). Deletes still run after all fetches complete.
+**Interfaces:** applyPlan runs fetch/copy/delete with a `ThreadPoolExecutor(4)` (or coroutines); per-file results collected with their index and re-ordered before summary/journal commit (journal order preserved). Deletes still run after all fetches complete. **Both applyPlan/apply_plan gain a `progress` callback emitting TRANSFER-phase events per copied/deleted file** (the copy/delete loops are currently SILENT — the UI froze at the plan count during the 2,444-file restructure, looking crashed). Python stays sequential but emits the same events.
 
-**Acceptance:** on a JVM integration test with a few hundred files, wall time drops ≥2×; summaries and journal order byte-identical to sequential; `PythonInteropTest` still passes.
+**Acceptance:** on a JVM integration test with a few hundred files, wall time drops ≥2×; summaries and journal order byte-identical to sequential; per-file progress events fire for every copy and delete; `PythonInteropTest` still passes.
 
 ## Task 3: Folder-level move detection (OPT-IN, both engines)
 
