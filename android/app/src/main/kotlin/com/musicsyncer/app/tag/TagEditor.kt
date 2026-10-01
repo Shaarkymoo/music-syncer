@@ -13,6 +13,7 @@ import java.io.File
 data class SongTags(
     val title: String?, val artist: String?, val album: String?,
     val albumArtist: String?, val genre: String?, val track: String?, val lyrics: String?,
+    val year: String? = null, val composer: String? = null, val trackTotal: String? = null,
 )
 
 object TagEditor {
@@ -27,6 +28,9 @@ object TagEditor {
                 tag.getFirst(FieldKey.TITLE), tag.getFirst(FieldKey.ARTIST), tag.getFirst(FieldKey.ALBUM),
                 tag.getFirst(FieldKey.ALBUM_ARTIST), tag.getFirst(FieldKey.GENRE), tag.getFirst(FieldKey.TRACK),
                 readLyrics(tag),
+                year = tag.getFirst(FieldKey.YEAR).ifEmpty { null },
+                composer = tag.getFirst(FieldKey.COMPOSER).ifEmpty { null },
+                trackTotal = tag.getFirst(FieldKey.TRACK_TOTAL).ifEmpty { null },
             )
         } finally {
             cache.delete()
@@ -44,13 +48,22 @@ object TagEditor {
             tag.setField(FieldKey.ALBUM, tags.album ?: "")
             tag.setField(FieldKey.ALBUM_ARTIST, tags.albumArtist ?: "")
             tag.setField(FieldKey.GENRE, tags.genre ?: "")
-            tag.setField(FieldKey.TRACK, tags.track ?: "")
+            tag.setField(FieldKey.TRACK, trackNumber(tags.track, tags.trackTotal))
+            tag.setField(FieldKey.YEAR, tags.year ?: "")
+            tag.setField(FieldKey.COMPOSER, tags.composer ?: "")
             writeLyrics(tag, tags.lyrics ?: "")
             AudioFileIO.write(audioFile)
             fs.write(rel, cache.readBytes())
         } finally {
             cache.delete()
         }
+    }
+
+    private fun trackNumber(track: String?, total: String?): String = when {
+        track.isNullOrBlank() -> ""
+        total.isNullOrBlank() -> track
+        track.contains('/') -> track
+        else -> "$track/$total"
     }
 
     private fun readLyrics(tag: org.jaudiotagger.tag.Tag): String? =

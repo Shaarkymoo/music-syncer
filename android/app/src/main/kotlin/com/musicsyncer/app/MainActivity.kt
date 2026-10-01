@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -40,10 +41,11 @@ import androidx.lifecycle.ViewModelProvider
 import com.musicsyncer.app.ui.BrowserScreen
 import com.musicsyncer.app.ui.EditorScreen
 import com.musicsyncer.app.ui.LogScreen
+import com.musicsyncer.app.ui.StatsScreen
 import com.musicsyncer.app.ui.StatusScreen
 import com.musicsyncer.app.ui.theme.MusicSyncTheme
 
-private enum class Screen(val title: String) { Status("Status"), Browser("Browse"), Log("Log") }
+private enum class Screen(val title: String) { Status("Status"), Browser("Browse"), Log("Log"), Stats("Stats") }
 
 class MainActivity : ComponentActivity() {
     private val vm: MusicViewModel by lazy { ViewModelProvider(this)[MusicViewModel::class.java] }
@@ -118,6 +120,13 @@ private fun MusicSyncApp(vm: MusicViewModel) {
                             label = { Text("Log") },
                             colors = navColors(),
                         )
+                        NavigationBarItem(
+                            selected = screen == Screen.Stats,
+                            onClick = { screen = Screen.Stats },
+                            icon = { Icon(Icons.Filled.Star, contentDescription = null) },
+                            label = { Text("Stats") },
+                            colors = navColors(),
+                        )
                     }
                 }
             },
@@ -131,6 +140,7 @@ private fun MusicSyncApp(vm: MusicViewModel) {
                         editing -> EditorScreen(vm, editRel!!, onClose = { editRel = null })
                         s == Screen.Status -> StatusScreen(vm)
                         s == Screen.Browser -> BrowserScreen(vm, onEditSong = { editRel = it })
+                        s == Screen.Stats -> StatsScreen(vm)
                         else -> LogScreen(vm)
                     }
                 }

@@ -1,6 +1,7 @@
 package com.musicsyncer.app.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.musicsyncer.app.MusicViewModel
+import com.musicsyncer.app.tag.m3uContent
 import com.musicsyncer.engine.FsEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -69,6 +71,7 @@ private fun dirPrefix(dir: String): String = if (dir.isEmpty()) "" else "$dir/"
  * @param onEditSong invoked with a song's relative path when "Edit metadata"
  *   is chosen — Task 7's metadata editor hooks in here.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
     val fs = vm.fs
@@ -90,6 +93,9 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
     var renameRel by remember { mutableStateOf<String?>(null) } // song being renamed
     var deleteRel by remember { mutableStateOf<String?>(null) } // song awaiting delete confirmation
     var moveRel by remember { mutableStateOf<String?>(null) }   // song awaiting playlist pick
+    var newPlaylist by remember { mutableStateOf(false) }        // creating a playlist from the move dialog
+    var folderMenuRel by remember { mutableStateOf<String?>(null) } // playlist awaiting an action
+    var renameFolderRel by remember { mutableStateOf<String?>(null) } // playlist awaiting a new name
     var query by remember { mutableStateOf("") }                // search box text
     var results by remember { mutableStateOf<List<FsEntry>?>(null) }
     var searching by remember { mutableStateOf(false) }
@@ -191,12 +197,14 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
 
         // Move-to-playlist dialog: pick one target playlist, stay on this folder.
         moveRel?.let { rel ->
-            val playlists by produceState(initialValue = emptyList<String>(), fs) {
+            val playlists by produceState(initialValue = emptyList<Pair<String, Int>>(), fs) {
                 value = withContext(Dispatchers.IO) {
+                    val all = runCatching { fs.list() }.getOrDefault(emptyList())
                     runCatching { fs.listDir("playlists") }.getOrDefault(emptyList())
                         .filter { it.isDirectory }
                         .map { it.rel.substringAfterLast('/') }
-                        .sorted()
+                        .map { name -> name to all.count { it.rel.startsWith("playlists/$name/") } }
+                        .sortedBy { it.first }
                 }
             }
             AlertDialog(
@@ -207,18 +215,103 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
                         Text("No playlists found under playlists/")
                     } else {
                         LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                            items(playlists) { name ->
+                            items(playlists) { (name, count) ->
                                 val alreadyThere = rel.substringBeforeLast('/') == "playlists/$name"
                                 TextButton(
                                     onClick = { confirmMove(rel, name) },
                                     enabled = !alreadyThere,
                                     modifier = Modifier.fillMaxWidth(),
-                                ) { Text(name, Modifier.fillMaxWidth()) }
+                                ) { Text("$name  ·  $count song${if (count == 1) "" else "s"}", Modifier.fillMaxWidth()) }
                             }
                         }
                     }
                 },
-                confirmButton = { TextButton(onClick = { moveRel = null }) { Text("Cancel") } },
+                confirmButton = {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(onClick = { newPlaylist = true; moveRel = null }) { Text("+ New playlist") }
+                        TextButton(onClick = { moveRel = null }) { Text("Cancel") }
+                    }
+                },
+            )
+        }
+
+        if (newPlaylist) {
+            var name by remember { mutableStateOf("") }
+            AlertDialog(
+                onDismissRequest = { newPlaylist = false },
+                title = { Text("New playlist") },
+                text = { OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Playlist name") }, singleLine = true) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val n = name.trim()
+                            newPlaylist = false
+                            if (n.isNotEmpty()) {
+                                val current = moveRel
+                                moveRel = null
+                                runOp {
+                                    fs.mkdirs("playlists/$n")
+                                    current?.let { rel ->
+                                        fs.write("playlists/$n/${rel.substringAfterLast('/')}", fs.read(rel))
+                                        fs.delete(rel)
+                                    }
+                                }
+                            }
+                        },
+                        enabled = name.isNotBlank(),
+                    ) { Text("Create & move") }
+                },
+                dismissButton = { TextButton(onClick = { newPlaylist = false }) { Text("Cancel") } },
+            )
+        }
+
+        // Playlist actions: rename a playlist folder, or export it as .m3u.
+        folderMenuRel?.let { folderRel ->
+            AlertDialog(
+                onDismissRequest = { folderMenuRel = null },
+                title = { Text(folderRel.substringAfterLast('/')) },
+                text = {
+                    Column {
+                        TextButton(
+                            onClick = { folderMenuRel = null; renameFolderRel = folderRel },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Rename playlist") }
+                        TextButton(
+                            onClick = {
+                                folderMenuRel = null
+                                val name = folderRel.substringAfterLast('/')
+                                runOp {
+                                    val songs = fs.list().filter { it.rel.startsWith("$folderRel/") }.map { it.rel }
+                                    fs.write("$folderRel/$name.m3u", m3uContent(name, songs).encodeToByteArray())
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Export as .m3u") }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { folderMenuRel = null }) { Text("Cancel") } },
+            )
+        }
+
+        renameFolderRel?.let { folderRel ->
+            var name by remember { mutableStateOf(folderRel.substringAfterLast('/')) }
+            AlertDialog(
+                onDismissRequest = { renameFolderRel = null },
+                title = { Text("Rename playlist") },
+                text = { OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val n = name.trim()
+                            renameFolderRel = null
+                            if (n.isNotEmpty() && n != folderRel.substringAfterLast('/')) {
+                                runOp { fs.rename(folderRel, dirPrefix(folderRel.substringBeforeLast('/')) + n) }
+                            }
+                        },
+                        enabled = name.isNotBlank(),
+                    ) { Text("Rename") }
+                },
+                dismissButton = { TextButton(onClick = { renameFolderRel = null }) { Text("Cancel") } },
             )
         }
 
@@ -259,12 +352,22 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
                     }
                 }
             }
+        } else if (entries.isEmpty()) {
+            Text(
+                "No songs in this folder",
+                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         } else {
             LazyColumn(Modifier.fillMaxSize()) {
                 items(entries, key = { (if (it is BrowserEntry.Dir) "d:" else "s:") + it.name }) { entry ->
                     when (entry) {
                         is BrowserEntry.Dir -> Row(
-                            Modifier.fillMaxWidth().clickable { navigateTo(dirPrefix(dir) + entry.name) }
+                            Modifier.fillMaxWidth()
+                                .combinedClickable(
+                                    onClick = { navigateTo(dirPrefix(dir) + entry.name) },
+                                    onLongClick = { folderMenuRel = dirPrefix(dir) + entry.name },
+                                )
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

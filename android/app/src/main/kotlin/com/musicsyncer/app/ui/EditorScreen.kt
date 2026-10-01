@@ -147,6 +147,23 @@ fun EditorScreen(vm: MusicViewModel, rel: String, onClose: () -> Unit) {
                     TagField("Album artist", tags.albumArtist) { form = tags.copy(albumArtist = it) }
                     TagField("Genre", tags.genre) { form = tags.copy(genre = it) }
                     TagField("Track", tags.track) { form = tags.copy(track = it) }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = tags.trackTotal ?: "",
+                            onValueChange = { form = tags.copy(trackTotal = it) },
+                            label = { Text("Total tracks") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        OutlinedTextField(
+                            value = tags.year ?: "",
+                            onValueChange = { form = tags.copy(year = it) },
+                            label = { Text("Year") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                    TagField("Composer", tags.composer) { form = tags.copy(composer = it) }
                     OutlinedTextField(
                         value = tags.lyrics ?: "",
                         onValueChange = { form = tags.copy(lyrics = it) },

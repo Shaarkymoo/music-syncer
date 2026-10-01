@@ -1,5 +1,6 @@
 package com.musicsyncer.app.fs
 
+import com.musicsyncer.app.tag.m3uContent
 import com.musicsyncer.engine.FsEntry
 import com.musicsyncer.engine.JdbcStore
 import org.junit.Assert.assertEquals
@@ -95,5 +96,10 @@ class MediaStoreHelpersTest {
         assertEquals(setOf("engsongs/A.mp3", "engsongs/sub"), engsongs.map { it.rel }.toSet())
         assertEquals(true, engsongs.first { it.rel == "engsongs/sub" }.isDirectory)
         assertEquals(1L, engsongs.first { it.rel == "engsongs/A.mp3" }.size)
+    }
+
+    @Test fun m3uContentListsFileNames() {
+        val content = m3uContent("lovely", listOf("playlists/lovely/A.mp3", "playlists/lovely/B.mp3"))
+        assertEquals("#EXTM3U\nA.mp3\nB.mp3\n", content)
     }
 }

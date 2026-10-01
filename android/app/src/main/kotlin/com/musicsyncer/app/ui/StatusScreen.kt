@@ -173,8 +173,9 @@ private fun ProgressCard(progress: ProgressState?, elapsedMs: Long) {
             // Bar 1 — phase + per-stage elapsed time.
             val phaseLabel = progress?.phase?.displayName() ?: "Working"
             val count = progress?.let { if (it.total > 0) " · ${it.done}/${it.total}" else "" } ?: ""
+            val eta = progress?.let { if (it.total > 0 && it.done > 0) " · ETA ${formatElapsed(elapsedMs * (it.total - it.done) / it.done)}" else "" } ?: ""
             Text(
-                text = "$phaseLabel · ${formatElapsed(elapsedMs)}$count",
+                text = "$phaseLabel · ${formatElapsed(elapsedMs)}$count$eta",
                 style = MaterialTheme.typography.titleMedium,
             )
             val fraction = progress?.let { if (it.total <= 0) 0f else it.done.toFloat() / it.total } ?: 0f

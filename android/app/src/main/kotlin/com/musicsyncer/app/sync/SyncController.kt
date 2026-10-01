@@ -140,13 +140,17 @@ class SyncController(
             cancelToken.set(false)
             _state.value = _state.value.copy(busy = true, discovering = true, error = null)
             try {
-                val url = findLaptop() ?: throw IllegalStateException("Laptop not found")
+                var url = findLaptop()
+                if (url == null) url = findLaptop() // mDNS can miss on the first pass
+                url = url ?: _state.value.server    // last-known server fallback (persisted)
+                if (url == null) throw IllegalStateException("Laptop not found")
                 setServer(url)
                 _state.value = _state.value.copy(discovering = false)
                 runSync(url)
             } catch (e: SyncCancelledException) {
                 _state.value = _state.value.copy(lastSummary = "Cancelled").also { persist(it) }
             } catch (e: Exception) {
+                notify("Sync failed", e.message ?: e.javaClass.simpleName)
                 _state.value = _state.value.copy(error = e.message ?: e.javaClass.simpleName)
             } finally {
                 _state.value = _state.value.copy(busy = false, discovering = false, progress = null)
@@ -162,6 +166,23 @@ class SyncController(
             lastSync = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date()),
             lastSummary = "fetched ${summary.fetched.size}, copied ${summary.copied.size}, pushed ${summary.pushed.size}, deleted ${summary.deleted.size}, conflicts ${summary.conflicts.size}",
         ).also { persist(it) }
+        notify("Sync complete", "fetched ${summary.fetched.size}, copied ${summary.copied.size}, deleted ${summary.deleted.size}")
+    }
+
+    private fun notify(title: String, text: String) {
+        if (android.os.Build.VERSION.SDK_INT < 26) return
+        try {
+            val nm = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nm.createNotificationChannel(android.app.NotificationChannel("sync", "Sync", android.app.NotificationManager.IMPORTANCE_LOW))
+            nm.notify(
+                1,
+                android.app.Notification.Builder(context, "sync")
+                    .setSmallIcon(com.musicsyncer.app.R.drawable.ic_launcher)
+                    .setContentTitle(title).setContentText(text).setAutoCancel(true).build(),
+            )
+        } catch (e: Exception) {
+            android.util.Log.w("MusicSyncer", "notification failed: ${e.message}")
+        }
     }
 
     fun verify() {
