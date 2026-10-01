@@ -210,3 +210,168 @@ implementer, then a spec + quality reviewer) and a final whole-branch review by
 a senior reviewer. That process caught every bug listed above — the engine is
 correct *because* of the review loops. All code is on `master` in this repo;
 the plan/spec docs live in `docs/superpowers/`.
+
+---
+
+## 9. The first real sync and everything after (2026-10-01 → 2026-10-02)
+
+This is the long session that took the project from "engine works in tests" to
+"the phone and laptop actually converge, fast". Every bug below was found with
+**live evidence** (adb, the phone's Room DB, the server's request log, and
+temporary instrumentation), not by reading code. The stories are the most
+useful part of this writeup.
+
+### 9.1 The 20-minute "stuck on a song" — a real first-sync blocker
+
+The first end-to-end sync froze for 20+ minutes. The phone UI sat on the last
+scanned song. The server log told the real story:
+
+```
+[00:44:56] GET /handshake?device_id=phone -> 200 (0 ms)
+[00:47:33] POST /sync -> 200 (875 ms)
+            ← nothing after this, ever
+```
+
+The phone hung **after** `/sync` and never made a single `GET /file`. The phone
+DB showed `sync_state` empty and the manifest **half-adopted** (1,851 shas
+filled, 4,225 still NULL). The culprit: `adoptShas` — on the first sync every
+phone row is a NULL-sha size-match, so for each of ~6,050 server files it ran
+`fs.exists()` = a **per-path SAF `findFile` walk (~200 ms each)** on the SD
+card. That's ~20 minutes of *zero-progress* loop. The fix: the just-completed
+scan makes the manifest an exact disk snapshot, so `manifestGet() != null` is
+existence proof — the phone passes `exists = { true }` and adoption became
+seconds. (Python keeps its real `is_file()` — it's free on a laptop.)
+
+**Lesson:** on Android, "does this file exist?" is a binder round-trip, not a
+syscall. Count them.
+
+### 9.2 The MediaStore fast path that was slower than the walk it replaced
+
+To kill the ~2.5-minute SAF tree walk, we added the optional
+`READ_MEDIA_AUDIO` fast path: one `MediaStore.Audio` query returns all ~6,000
+files in ~150 ms, and `HybridFs` reconciles index lag against SAF. The user
+granted the permission, installed the build… and the sync got *slower*, not
+faster. Instrumentation (one `Log.i` per list) found it in minutes:
+
+```
+list(volume=3737-6133, relPath=my songs) -> 6075 rows in 167ms
+sample=[my songs/engsongs/Titanic remix.mp3, ...]   ← THE BUG
+```
+
+The lister returned rels **with the `my songs/` folder prefix baked in**, but
+the engine's paths are folder-relative (`engsongs/…`). `HybridFs`'s index-lag
+reconcile compared manifest paths against prefixed keys, found zero matches,
+and ran `saf.exists() + saf.stat()` for **all 6,076 rows** — the "fast" path
+was ~40 minutes. One line (`removePrefix`) fixed it: 2,057 ms per full list,
+5-second scans.
+
+**Lesson:** when you replace a slow primitive with a fast cache, check the
+*shape* of the data the cache returns, not just its speed.
+
+### 9.3 The `?` in a filename that blocked every sync
+
+The first fetch failed with `not found: new music/.ms-partial-…-What's Up?.mp3`.
+Exactly two laptop files had a literal `?` in their names — a URI-reserved
+character that SAF can't create or look up (and FAT32 forbids). Every sync
+would abort on them forever. The user approved renaming the two files; the
+engine surfaced the failure clearly (no silent failures — by design).
+
+**Lesson:** filenames are a contract between the laptop's ext4 and the phone's
+SD card; the mirror inherits the narrower filesystem.
+
+### 9.4 The delete that wouldn't propagate — an engine gap, found by the Bee Gees
+
+After the transfer fixes, the sync plan finally listed the 25 deleted Bee Gees
+files… but the phone's plan put them in `push`, not `delete`. Why: a local-only
+file with an *unseen local CREATE* is pushed, and the server (which had
+*deleted* them) correctly refused to fetch them back. **Stalemate — permanent
+divergence.** The phone's delete loop never consulted the remote journal. The
+fix: a remote `DELETE` op beats an unseen local CREATE — mirror the delete.
+The engine also built the *server's* plan from a pre-apply snapshot, so after
+the phone deleted stale copies it tried to `fs.read()` a just-deleted file and
+errored — fixed by recomputing the phone state after apply. Both changes
+landed in **both engines** (Python + Kotlin) with mirrored regression tests,
+including a legacy-cursor setup verified red first.
+
+**Lesson:** "deletes propagate both ways" needs the *remote's* journal, not
+just the local one — and plans must be built from post-apply state.
+
+### 9.5 Daily-use features
+
+- **Move-to-playlist**: 2-click scrollable playlist picker (the user's exact
+  spec: pick a playlist, stay on the folder, 20+ playlists scrollable). SAF can
+  only rename within a directory, so moves are copy+delete.
+- **Persisted state**: server URL / last sync / summary now survive app
+  restarts (they were in-memory — "why is it empty again?").
+- **Play in Samsung Music**: `ACTION_VIEW` with the MediaStore URI (fallback
+  SAF), so the app never needs a player.
+- **Metadata reality check**: most songs genuinely have *no* tags — some have
+  only lyrics, a few are fully tagged. The editor shows reality, not a bug.
+- Two docs: `docs/how-sync-works.md` (lazy scan, journal/manifest, and what
+  happens on delete/move/tag-edit on both devices) and
+  `docs/terminal-commands.md` (every PC command and when to use it).
+- **Wireless update that never triggered**: the whole `/version` + `/apk`
+  self-update existed, but the version string was **never bumped**, so
+  "Check for update" always answered "Up to date". Bumped to 0.1.1 → the flow
+  worked, no adb needed.
+
+### 9.6 The 2,444-file restructure: a mirror's worst case
+
+The user moved `playlists2/{albums,lowkey}` to the root (`albums/`, `lowkey/`).
+The naive engine (no move detection — locked design) sees 2,444 deletes +
+2,444 creates. Two problems surfaced:
+
+1. **The copy is silent.** `applyPlan` copied files but emitted **no progress
+   events** — the UI sat frozen at the plan count for the whole phase, looking
+   crashed while it worked. The fix (later, in Phase 3) threads progress into
+   every copy and delete.
+2. **The copy doubles the space.** Content-addressable copy keeps old + new
+   paths on disk until deletes run — a 26 GB library briefly needs ~52 GB.
+   The SD card ran out mid-copy ("no space"), Android auto-renamed colliding
+   writes to `"Song (1).mp3"` (34+ confirmed duplicates), and a partial
+   folder was manually deleted. The mirror self-healed on the next resumable
+   sync, but the lesson is structural: **a full-library restructure is the
+   worst case for a copy-based mirror.**
+
+We added two weapons: a **SAF directory-document cache** (~6× fewer provider
+queries per file op) and, in Phase 3, **opt-in folder-level move detection**
+— when every file under an old dir maps 1:1 by sha to a sibling dir, the whole
+thing collapses to ONE directory rename (verified live: a playlist rename
+mirrors in a 6-second sync with zero file transfers, both directions).
+
+### 9.7 Phase 3 — the optimization & capability pass (all 18 tasks)
+
+Planned in `docs/superpowers/plans/2026-10-02-phase3-optimizations.md`,
+implemented over a long session, all green (Python 86, engine 71, app 30):
+
+- **Speed**: parallel bulk apply (4 workers, journal order preserved), batched
+  DB writes flushed every 100 ops (a kill can't roll back the whole phase),
+  concurrent-friendly SAF cache, per-file progress for copies/deletes.
+- **Control**: stop button (cooperative cancellation at every loop boundary),
+  wake-lock during sync, low-free-space warning, journal prune (90 days,
+  cursor-guarded), mDNS retry + last-known server.
+- **Daily UX**: multi-select in Browse (batch move/delete), move-dialog song
+  counts + "new playlist", sorting (name/size/date) + folder counts, playlist
+  rename + .m3u export, ETA on the progress card, completion notification,
+  empty states, Stats tab, tag editor year/composer/track-total.
+- **Security**: shared-token auth, default OFF (401 without it).
+- **Status screen** finally scrolls.
+
+### 9.8 Lessons learned (the dev.to takeaway)
+
+1. **Instrument before you theorize.** Every "why is it slow/broken" here was
+   answered by a one-line log statement or a DB query, not by reading code.
+2. **Count SAF round-trips like syscalls.** On Android, existence checks,
+   stat, and rename each cost a ContentResolver binder call; ~6,000 of them
+   is minutes.
+3. **Check the shape, not just the speed, of a cache's output.**
+4. **"Deletes propagate both ways" is a journal-algebra problem** — the
+   remote's ops matter, and plans must reflect post-apply state.
+5. **A copy-based mirror doubles space during a restructure.** If you can't
+   rename, expect the worst case.
+6. **Silent progress is indistinguishable from a crash.** Every phase must
+   report per item, even when it's fast.
+7. **Version bumps are the self-update trigger.** A perfect update mechanism
+   with a static version string is a dead button.
+8. **The mirror inherits the narrower filesystem** — `?` on ext4 never makes
+   it to the SD card.
