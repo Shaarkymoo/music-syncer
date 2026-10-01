@@ -14,16 +14,29 @@ class SafFs(private val context: Context, treeUri: Uri) : Fs {
     private val root: DocumentFile = DocumentFile.fromTreeUri(context, treeUri)
         ?: throw IllegalArgumentException("not a SAF tree: $treeUri")
 
+    // Resolved directory documents, keyed by rel path. A copy/delete phase
+    // resolves the same parents over and over (a full findFile walk costs
+    // ~300ms per segment on the SD card); the cache turns that into one
+    // lookup. Cleared on list()/listDir() so browsing always sees a fresh tree;
+    // the app's own write/delete/rename ops leave the cached PARENT docs valid.
+    private val dirCache = mutableMapOf<String, DocumentFile>()
+
     private fun doc(rel: String): DocumentFile? {
         var current = root
+        var acc = ""
         for (part in rel.split('/')) {
             if (part.isEmpty()) continue
+            acc = if (acc.isEmpty()) part else "$acc/$part"
+            val cached = dirCache[acc]
+            if (cached != null) { current = cached; continue }
             current = current.findFile(part) ?: return null
+            dirCache[acc] = current
         }
         return current
     }
 
     override fun list(): List<FsEntry> {
+        dirCache.clear()
         val out = mutableListOf<FsEntry>()
         fun walk(dir: DocumentFile, prefix: String) {
             for (child in dir.listFiles()) {
@@ -40,6 +53,7 @@ class SafFs(private val context: Context, treeUri: Uri) : Fs {
     }
 
     override fun listDir(rel: String): List<FsDirEntry> {
+        dirCache.clear()
         val dir = doc(rel) ?: throw IOException("not found: $rel")
         val out = mutableListOf<FsDirEntry>()
         for (child in dir.listFiles()) {
