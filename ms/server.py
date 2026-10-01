@@ -15,7 +15,7 @@ from ms.progress import Progress
 PARTIAL_PREFIX = ".ms-partial-"
 SCHEMA_VERSION = 1
 # Keep in sync with android/app/build.gradle.kts versionName.
-APP_VERSION = "0.1.1"
+APP_VERSION = "0.1.2"
 
 # Per-request start time so log_message can report handler duration. The
 # server is threaded, so this must be thread-local.
