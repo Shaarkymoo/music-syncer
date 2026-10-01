@@ -83,9 +83,8 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     remote_ops = {op["path"]: op["op"] for op in server_ops}
     summary = apply.apply_plan(root, plan, conn, our_device, server_device, remote_ops,
                                now_ns, lambda rel: _http_get_bytes(
-                                   f"{server_url}/file?path={urllib.parse.quote(rel)}"))
-    for i, rel in enumerate(summary["fetched"], 1):
-        emit(progress, SyncPhase.TRANSFER, i, len(summary["fetched"]), rel)
+                                   f"{server_url}/file?path={urllib.parse.quote(rel)}"),
+                               progress=progress)
 
     # 5. SERVER's plan: what the server needs (fetch = push to it; delete/conflict = applied at /done).
     #    peer_cursor = how much of the SERVER's journal WE have seen.

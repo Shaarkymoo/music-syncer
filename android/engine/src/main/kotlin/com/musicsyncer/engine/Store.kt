@@ -18,4 +18,6 @@ interface SyncStore {
     fun journalSince(afterId: Long): List<JournalOp>
     fun syncStateGet(peerDeviceId: String): SyncStateRow?
     fun syncStateSet(peerDeviceId: String, lastSeenJournalId: Long, lastSyncNs: Long)
+    /** Runs [block]'s manifest/journal writes in one transaction (bulk apply batching). */
+    fun withBatch(block: () -> Unit)
 }

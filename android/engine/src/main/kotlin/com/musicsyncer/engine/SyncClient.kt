@@ -99,10 +99,9 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
     val planItems = plan.fetch.map { it.first } + plan.delete + plan.conflictLoser.map { it.first }
     for ((i, rel) in planItems.withIndex()) emit(progress, SyncPhase.PLAN, i + 1, planItems.size, "")
     val remoteOps = serverOps.associate { it.path to it.op }
-    val applied = applyPlan(fs, store, plan, ourDevice, serverDevice, remoteOps, nowNs) { rel ->
+    val applied = applyPlan(fs, store, plan, ourDevice, serverDevice, remoteOps, nowNs, progress) { rel ->
         httpBytes(client, "$serverUrl/file?path=${URLEncoder.encode(rel, "UTF-8")}")
     }
-    for ((i, rel) in applied.fetched.withIndex()) emit(progress, SyncPhase.TRANSFER, i + 1, applied.fetched.size, rel)
 
     // 5. SERVER's plan: peer_cursor = how much of the SERVER's journal WE have seen.
     //    Recompute OUR state after apply so the server plan sees files deleted

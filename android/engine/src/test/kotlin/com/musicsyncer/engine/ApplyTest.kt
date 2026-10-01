@@ -110,4 +110,27 @@ class ApplyTest {
             applyPlan(fs(), store(), plan, "me", "phone", emptyMap(), 1000) { ByteArray(0) }
         }
     }
+
+    @Test fun applyEmitsTransferProgressForCopyAndDelete() {
+        val root = dir.resolve("root")
+        Files.createDirectories(root.resolve("old"))
+        Files.write(root.resolve("old/A.mp3"), byteArrayOf(1, 2, 3))
+        Files.write(root.resolve("B.mp3"), byteArrayOf(9))
+        val fs = PathFs(root)
+        val store = JdbcStore("jdbc:sqlite:${dir.resolve("p.db")}")
+        store.manifestUpsert("old/A.mp3", 3, 1, "sha1", 1)
+        store.manifestUpsert("B.mp3", 1, 1, "sha2", 1)
+        val plan = Plan(fetch = mutableListOf(Triple("new/A.mp3", 3L, "sha1")), delete = mutableListOf("B.mp3"))
+        val events = mutableListOf<Pair<Int, Int>>() // (done, total)
+        val summary = applyPlan(
+            fs, store, plan, "me", "phone", emptyMap(), 2,
+            progress = { phase, done, total, _ -> if (phase == SyncPhase.TRANSFER) events.add(done to total) },
+        ) { ByteArray(0) }
+        assertEquals(listOf("new/A.mp3"), summary.copied)
+        assertEquals(listOf("B.mp3"), summary.deleted)
+        assertEquals(listOf(1, 2), events.map { it.first }) // done counts up
+        assertEquals(true, events.all { it.second == 2 })   // total = fetch + delete
+        assertEquals(true, fs.exists("new/A.mp3"))
+        assertEquals(false, fs.exists("B.mp3"))
+    }
 }

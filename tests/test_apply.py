@@ -106,3 +106,25 @@ def test_apply_idempotent_noop_journals_nothing(tmp_path: Path):
                      lambda p: root.joinpath(p).read_bytes())
     assert db.journal_head(conn) == 0  # nothing new journaled
     conn.close()
+
+def test_apply_emits_transfer_progress_for_copy_and_delete(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "old").mkdir()
+    (root / "old" / "A.mp3").write_bytes(b"abc")
+    (root / "B.mp3").write_bytes(b"x")
+    conn = _conn(tmp_path)
+    db.manifest_upsert(conn, "old/A.mp3", 3, 1, "sha1", 1)
+    db.manifest_upsert(conn, "B.mp3", 1, 1, "sha2", 1)
+    plan = Plan(fetch=[("new/A.mp3", 3, "sha1")], delete=["B.mp3"])
+    events = []
+    summary = apply.apply_plan(root, plan, conn, "me", "phone", {}, 2,
+                               lambda p: b"",
+                               progress=lambda phase, done, total, rel: events.append((phase, done, total, rel)))
+    assert summary["copied"] == ["new/A.mp3"]
+    assert summary["deleted"] == ["B.mp3"]
+    assert [e[1] for e in events] == [1, 2]        # done counts up across copy + delete
+    assert all(e[2] == 2 for e in events)          # total = fetch + delete
+    assert (root / "new" / "A.mp3").read_bytes() == b"abc"
+    assert not (root / "B.mp3").exists()
+    conn.close()

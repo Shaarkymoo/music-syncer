@@ -19,7 +19,8 @@ class SafFs(private val context: Context, treeUri: Uri) : Fs {
     // ~300ms per segment on the SD card); the cache turns that into one
     // lookup. Cleared on list()/listDir() so browsing always sees a fresh tree;
     // the app's own write/delete/rename ops leave the cached PARENT docs valid.
-    private val dirCache = mutableMapOf<String, DocumentFile>()
+    // ConcurrentHashMap: applyPlan runs file ops on a worker pool.
+    private val dirCache = java.util.concurrent.ConcurrentHashMap<String, DocumentFile>()
 
     private fun doc(rel: String): DocumentFile? {
         var current = root

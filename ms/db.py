@@ -1,6 +1,10 @@
 import sqlite3
 from pathlib import Path
 
+# Connections currently inside an apply batch (bulk apply commits once at the
+# end), keyed by id() — sqlite3.Connection objects cannot be weak-referenced.
+_batch_flags: dict[int, bool] = {}
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS manifest (
     path        TEXT PRIMARY KEY,
@@ -41,6 +45,26 @@ def manifest_get(conn, path: str):
     return None if row is None else (row["size"], row["mtime_ns"], row["sha256"], row["last_seen_ns"])
 
 
+def _commit(conn) -> None:
+    """Commit unless the connection is inside an apply batch (bulk apply commits once)."""
+    if not _batch_flags.get(id(conn), False):
+        conn.commit()
+
+
+def _batch_begin(conn) -> bool:
+    prev = _batch_flags.get(id(conn), False)
+    _batch_flags[id(conn)] = True
+    return prev
+
+
+def _batch_end(conn, prev: bool) -> None:
+    if prev:
+        _batch_flags[id(conn)] = True
+    else:
+        _batch_flags.pop(id(conn), None)
+        conn.commit()
+
+
 def manifest_upsert(conn, path: str, size: int, mtime_ns: int, sha256: str | None, now_ns: int) -> None:
     conn.execute(
         """INSERT INTO manifest (path, size, mtime_ns, sha256, last_seen_ns)
@@ -49,12 +73,12 @@ def manifest_upsert(conn, path: str, size: int, mtime_ns: int, sha256: str | Non
              mtime_ns=excluded.mtime_ns, sha256=excluded.sha256,
              last_seen_ns=excluded.last_seen_ns""",
         (path, size, mtime_ns, sha256, now_ns))
-    conn.commit()
+    _commit(conn)
 
 
 def manifest_delete(conn, path: str) -> None:
     conn.execute("DELETE FROM manifest WHERE path=?", (path,))
-    conn.commit()
+    _commit(conn)
 
 
 def manifest_all(conn) -> list[tuple]:
@@ -68,7 +92,7 @@ def journal_append(conn, op: str, path: str, size: int | None, sha256: str | Non
     cur = conn.execute(
         "INSERT INTO journal (op, path, size, sha256, ts_ns, device) VALUES (?,?,?,?,?,?)",
         (op, path, size, sha256, ts_ns, device))
-    conn.commit()
+    _commit(conn)
     return cur.lastrowid
 
 

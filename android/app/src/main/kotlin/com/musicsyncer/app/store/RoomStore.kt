@@ -71,4 +71,16 @@ class RoomStore(private val db: MusicSyncDatabase) : SyncStore {
         dao.syncStateGet(peerDeviceId)?.let { SyncStateRow(it.peerDeviceId, it.lastSeenJournalId, it.lastSyncNs) }
     override fun syncStateSet(peerDeviceId: String, lastSeenJournalId: Long, lastSyncNs: Long) =
         dao.syncStateSet(SyncStateEntity(peerDeviceId, lastSeenJournalId, lastSyncNs))
+
+    // Room transactions are thread-confined: the block's DAO calls run on the
+    // same thread that began the transaction (apply's commit loop is single-threaded).
+    override fun withBatch(block: () -> Unit) {
+        db.beginTransaction()
+        try {
+            block()
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
 }

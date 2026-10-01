@@ -107,4 +107,16 @@ class JdbcStore(url: String) : SyncStore {
             ).use { ps -> ps.setString(1, peerDeviceId); ps.setLong(2, lastSeenJournalId); ps.setLong(3, lastSyncNs); ps.executeUpdate() }
         }
     }
+
+    // synchronized() is reentrant on the same monitor, so the per-op methods
+    // called inside [block] keep working while the transaction is open.
+    override fun withBatch(block: () -> Unit) = synchronized(lock) {
+        conn.autoCommit = false
+        try {
+            block()
+            conn.commit()
+        } finally {
+            conn.autoCommit = true
+        }
+    }
 }
