@@ -25,6 +25,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -54,12 +55,14 @@ import kotlinx.coroutines.withContext
 private sealed interface BrowserEntry {
     val name: String
 
-    data class Dir(override val name: String) : BrowserEntry
+    data class Dir(override val name: String, val count: Int = 0) : BrowserEntry
 
     data class Song(val entry: FsEntry) : BrowserEntry {
         override val name: String get() = entry.rel.substringAfterLast('/')
     }
 }
+
+private enum class SortMode { NAME, SIZE, DATE }
 
 /** "" for the root, otherwise "$dir/" — the prefix shared by every entry under [dir]. */
 private fun dirPrefix(dir: String): String = if (dir.isEmpty()) "" else "$dir/"
@@ -100,6 +103,7 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
     var selectionMode by remember { mutableStateOf(false) }     // batch-selection active
     var selection by remember { mutableStateOf(setOf<String>()) }
     var multiDelete by remember { mutableStateOf(false) }       // delete confirmation open for the selection
+    var sortMode by remember { mutableStateOf(SortMode.NAME) }
     var query by remember { mutableStateOf("") }                // search box text
     var results by remember { mutableStateOf<List<FsEntry>?>(null) }
     var searching by remember { mutableStateOf(false) }
@@ -121,17 +125,32 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
         searching = false
     }
 
-    val entries by produceState(initialValue = emptyList<BrowserEntry>(), dir, refreshTick, fs) {
-        val result = withContext(Dispatchers.IO) { runCatching { fs.listDir(dir) } }
+    val entries by produceState(initialValue = emptyList<BrowserEntry>(), dir, refreshTick, fs, sortMode) {
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                val all = fs.list()
+                val children = fs.listDir(dir)
+                val prefix = if (dir.isEmpty()) "" else "$dir/"
+                val songs = children.filter { !it.isDirectory }
+                    .map { BrowserEntry.Song(FsEntry(it.rel, it.size, it.mtimeNs)) }
+                    .let { list ->
+                        when (sortMode) {
+                            SortMode.NAME -> list.sortedBy { it.entry.rel }
+                            SortMode.SIZE -> list.sortedByDescending { it.entry.size }
+                            SortMode.DATE -> list.sortedByDescending { it.entry.mtimeNs }
+                        }
+                    }
+                val dirs = children.filter { it.isDirectory }
+                    .map { entry ->
+                        val name = entry.rel.substringAfterLast('/')
+                        BrowserEntry.Dir(name, all.count { it.rel.startsWith("$prefix$name/") })
+                    }
+                    .sortedBy { it.name }
+                dirs + songs
+            }
+        }
         result.exceptionOrNull()?.let { error = it.message ?: "Failed to list folder" }
-        val children = result.getOrDefault(emptyList())
-        val songs = children.filter { !it.isDirectory }
-            .map { BrowserEntry.Song(FsEntry(it.rel, it.size, it.mtimeNs)) }
-            .sortedBy { it.entry.rel }
-        val dirs = children.filter { it.isDirectory }
-            .map { BrowserEntry.Dir(it.rel.substringAfterLast('/')) }
-            .sortedBy { it.name }
-        value = dirs + songs
+        value = result.getOrDefault(emptyList())
     }
 
     fun navigateTo(target: String) {
@@ -368,6 +387,17 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
                 TextButton(onClick = { multiDelete = true }, enabled = selection.isNotEmpty()) { Text("Delete") }
                 IconButton(onClick = { exitSelection() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Exit selection") }
             }
+        } else {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("Sort:", style = MaterialTheme.typography.bodySmall)
+                listOf(SortMode.NAME to "Name", SortMode.SIZE to "Size", SortMode.DATE to "Date").forEach { (mode, label) ->
+                    FilterChip(selected = sortMode == mode, onClick = { sortMode = mode }, label = { Text(label) })
+                }
+            }
         }
 
         error?.let {
@@ -419,6 +449,14 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
                         ) {
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                             Text(entry.name, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                            if (entry.count > 0) {
+                                Text(
+                                    "(${entry.count})",
+                                    Modifier.padding(start = 8.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
 
                         is BrowserEntry.Song -> SongRow(
