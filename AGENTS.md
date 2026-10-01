@@ -217,30 +217,24 @@ $ADB shell run-as com.musicsyncer.app cat databases/music-sync.db > /tmp/phone.d
   the SAF dir-document cache in `SafFs` cut per-file cost ~6×; expect ~1-2
   copies/s). **Verify the phone reaches manifest 6,053 / no `playlists2/`
   leftovers before Phase 3 work.**
-- **Phase 3 PLANNED — optimization & capability pass.** Scope, tasks, tools,
-  and constraints: `docs/superpowers/plans/2026-10-02-phase3-optimizations.md`.
-  Confirmed: parallel bulk ops, opt-in folder-move detection, batched DB
-  writes, concurrent transfers, wake-lock + free-space, conflict viewer
-  (Listen/Keep/Delete), mDNS retry, journal prune (90d, cursor-guarded),
-  multi-select, new-playlist + counts in move dialog, sorting, playlist
-  rename/create, ETA + empty states, stop button, shared-token auth, library
-  stats screen, tag-editor extras (year/composer/track-total), per-playlist
-  .m3u export. Out: album art, conflict restore, light theme. **Do NOT start
-  implementing without a fresh session reading AGENTS.md + the plan.**
-- **Phase 3 first batch SHIPPED (2026-10-02, `master` ~f23132e):** parallel
-  bulk apply + per-file apply progress + chunked DB batches (Tasks 1,2), stop
-  button (14), journal prune (8), mDNS retry (7), move-dialog counts + new
-  playlist (10), playlist rename + .m3u export (12), ETA + notification +
-  empty states (13), stats tab (16), tag year/composer/track-total (17).
-  **REMAINING:** folder-move detection (3), wake-lock + free-space (5 —
-  permission flag), conflict viewer (6), multi-select (9), sorting (11),
-  shared-token auth (15 — needs a token). The 2,444-file restructure resumed
-  on the final build (~74%, ETA ~60 min); verify phone manifest 6,053 / no
-  `playlists2/` before further engine work.
-- Known remaining work: shared-token auth (Phase 3 Task 15), stop-scan button
-  (Phase 3 Task 14), conflict viewer (Task 6), any follow-ups from the real
-  sync test.
+- **Phase 3 COMPLETE (2026-10-02, `master` ~d7ab397) — all 18 tasks shipped.**
+  Spec: `docs/superpowers/plans/2026-10-02-phase3-optimizations.md`. Parallel
+  bulk apply + per-file apply progress + chunked DB batches (1,2) · opt-in
+  folder-level move detection (3, "Smart folder moves" switch) · stop button
+  (14) · journal prune 90d cursor-guarded (8) · wake-lock + low-space warning
+  (5, WAKE_LOCK added) · conflict viewer Listen/Keep/Delete (6) · mDNS retry +
+  last-known (7) · multi-select (9) · move-dialog counts + new playlist (10) ·
+  sorting + folder counts (11) · playlist rename + m3u (12) · ETA + empty
+  states + notification (13) · stats tab (16) · tag year/composer/track-total
+  (17) · shared-token auth default-OFF (15). Version 0.1.2 (versionCode 3),
+  server serving /version + /apk for wireless updates.
+  **Verify on the phone:** update to 0.1.2 (Check for update — no adb needed),
+  run a sync, confirm manifest 6,053 / no `playlists2/` leftovers (the 2,444-
+  file restructure was ~74% copied when this phase wrapped; resumable).
+- Known remaining work: none planned — out-of-scope confirmed (album art,
+  conflict restore, light theme); shared-token auth is implemented but OFF
+  (enable via MS_TOKEN/config + app Status field if desired).
 
-**Test counts:** Python 81 · engine 70 · app 28. **Delegated sessions** for
+**Test counts:** Python 86 (mDNS discovery test excluded when a server is up) · engine 71 · app 30. **Delegated sessions** for
 prior work are in `.superpowers/sdd/progress.md`; `notes.md` has the full
 project writeup and design rationale.
