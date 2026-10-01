@@ -1,6 +1,7 @@
 package com.musicsyncer.app.fs
 
 import com.musicsyncer.app.tag.m3uContent
+import com.musicsyncer.app.ui.originalName
 import com.musicsyncer.engine.FsEntry
 import com.musicsyncer.engine.JdbcStore
 import org.junit.Assert.assertEquals
@@ -96,6 +97,13 @@ class MediaStoreHelpersTest {
         assertEquals(setOf("engsongs/A.mp3", "engsongs/sub"), engsongs.map { it.rel }.toSet())
         assertEquals(true, engsongs.first { it.rel == "engsongs/sub" }.isDirectory)
         assertEquals(1L, engsongs.first { it.rel == "engsongs/A.mp3" }.size)
+    }
+
+    @Test fun originalNameParsesConflictFiles() {
+        assertEquals("A.mp3", originalName("playlists/lovely/.A.mp3.sync-conflict-123.mp3"))
+        assertEquals("Song", originalName("Rock/.Song.sync-conflict-999"))
+        assertEquals(null, originalName("playlists/lovely/A.mp3"))
+        assertEquals(null, originalName("playlists/lovely/.normal-hidden.mp3"))
     }
 
     @Test fun m3uContentListsFileNames() {
