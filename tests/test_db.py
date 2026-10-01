@@ -40,3 +40,20 @@ def test_sync_state_roundtrip(tmp_path: Path):
     db.sync_state_set(conn, "phone", 42, 999)
     assert db.sync_state_get(conn, "phone") == (42, 999)
     conn.close()
+
+def test_prune_journal_is_cursor_guarded(tmp_path):
+    conn = db.init_db(tmp_path / "t.db")
+    db.journal_append(conn, "CREATE", "old.mp3", 1, None, 1_000, "laptop")      # ancient op
+    db.journal_append(conn, "CREATE", "new.mp3", 1, None, 2_000_000_000_000_000_000, "laptop")  # recent
+    removed = db.prune_journal(conn, 1_000_000_000_000_000_000, 2)  # peer saw both
+    assert removed == 1
+    assert db.journal_head(conn) == 2  # the recent op survives
+    conn.close()
+
+
+def test_prune_never_exceeds_peer_cursor(tmp_path):
+    conn = db.init_db(tmp_path / "t.db")
+    db.journal_append(conn, "CREATE", "old.mp3", 1, None, 1_000, "laptop")
+    removed = db.prune_journal(conn, 1_000_000_000_000_000_000, 0)  # no peer cursor
+    assert removed == 0  # nothing is safe to delete yet
+    conn.close()

@@ -124,3 +124,13 @@ def sync_state_set(conn, peer_device_id: str, last_seen_journal_id: int, last_sy
              last_sync_ns=excluded.last_sync_ns""",
         (peer_device_id, last_seen_journal_id, last_sync_ns))
     conn.commit()
+
+
+def prune_journal(conn, cutoff_ns: int, min_cursor_id: int) -> int:
+    """Delete journal ops older than cutoff_ns whose id is not newer than every
+    peer cursor — an unsynced peer must not lose ops it hasn't seen yet.
+    Returns the number of rows removed."""
+    cur = conn.execute(
+        "DELETE FROM journal WHERE ts_ns < ? AND id <= ?", (cutoff_ns, min_cursor_id))
+    conn.commit()
+    return cur.rowcount

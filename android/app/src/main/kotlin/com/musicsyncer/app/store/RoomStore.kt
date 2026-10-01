@@ -43,6 +43,7 @@ interface StoreDao {
     @Query("SELECT * FROM journal WHERE id > :afterId ORDER BY id") fun journalSince(afterId: Long): List<JournalEntity>
     @Query("SELECT * FROM sync_state WHERE peerDeviceId = :peer") fun syncStateGet(peer: String): SyncStateEntity?
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun syncStateSet(row: SyncStateEntity)
+    @Query("DELETE FROM journal WHERE tsNs < :cutoffNs AND id <= :minCursorId") fun pruneJournal(cutoffNs: Long, minCursorId: Long): Int
 }
 
 @Database(entities = [ManifestEntity::class, JournalEntity::class, SyncStateEntity::class], version = 1)
@@ -79,6 +80,17 @@ class RoomStore(private val db: MusicSyncDatabase) : SyncStore {
         try {
             block()
             db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    override fun pruneJournal(cutoffNs: Long, minCursorId: Long): Int {
+        db.beginTransaction()
+        return try {
+            val n = dao.pruneJournal(cutoffNs, minCursorId)
+            db.setTransactionSuccessful()
+            n
         } finally {
             db.endTransaction()
         }

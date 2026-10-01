@@ -11,7 +11,8 @@ def _default_path() -> Path:
 
 def load_config(path: Path | None = None) -> dict:
     p = path or _default_path()
-    cfg: dict = {"base_path": None, "port": DEFAULT_PORT, "db_path": None, "apk_path": None}
+    cfg: dict = {"base_path": None, "port": DEFAULT_PORT, "db_path": None, "apk_path": None,
+                   "journal_retention_days": 90}
     if p.exists():
         with p.open("rb") as f:
             data = tomllib.load(f)

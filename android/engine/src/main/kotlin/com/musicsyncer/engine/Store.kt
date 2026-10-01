@@ -20,4 +20,6 @@ interface SyncStore {
     fun syncStateSet(peerDeviceId: String, lastSeenJournalId: Long, lastSyncNs: Long)
     /** Runs [block]'s manifest/journal writes in one transaction (bulk apply batching). */
     fun withBatch(block: () -> Unit)
+    /** Deletes journal ops older than [cutoffNs] whose id is not newer than [minCursorId]; returns rows removed. */
+    fun pruneJournal(cutoffNs: Long, minCursorId: Long): Int
 }

@@ -119,4 +119,10 @@ class JdbcStore(url: String) : SyncStore {
             conn.autoCommit = true
         }
     }
+
+    override fun pruneJournal(cutoffNs: Long, minCursorId: Long): Int = synchronized(lock) {
+        conn.prepareStatement("DELETE FROM journal WHERE ts_ns < ? AND id <= ?").use { ps ->
+            ps.setLong(1, cutoffNs); ps.setLong(2, minCursorId); ps.executeUpdate()
+        }
+    }
 }

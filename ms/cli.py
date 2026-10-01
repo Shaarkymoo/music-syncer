@@ -41,6 +41,8 @@ def _args() -> argparse.ArgumentParser:
     serve_p.add_argument("--port", type=int, default=None)
     log_p = sub.add_parser("log", parents=[parent])
     log_p.add_argument("--limit", type=int, default=50)
+    log_p.add_argument("--prune", action="store_true",
+                        help="delete journal ops older than journal_retention_days (cursor-guarded)")
     verify_p = sub.add_parser("verify", parents=[parent])
     verify_p.add_argument("--path", required=True)
     return p
@@ -65,6 +67,12 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "log":
         conn = db.init_db(db_path)
+        if args.prune:
+            retention_days = cfg.get("journal_retention_days", 90)
+            cutoff = time.time_ns() - int(retention_days * 86400 * 1e9)
+            min_cursor = conn.execute("SELECT COALESCE(MIN(last_seen_journal_id), 0) FROM sync_state").fetchone()[0]
+            removed = db.prune_journal(conn, cutoff, min_cursor)
+            print(f"pruned {removed} ops older than {retention_days} days (cursor-guarded at {min_cursor})")
         for op in db.journal_since(conn, 0)[-args.limit:]:
             ts = datetime.fromtimestamp(op["ts_ns"] / 1e9, tz=timezone.utc).isoformat(timespec="seconds")
             print(f"{ts}  {op['device']:<8} {op['op']:<6} {op['path']}")
@@ -106,6 +114,10 @@ def main(argv: list[str] | None = None) -> int:
         port = args.port or cfg["port"]
         conn = db.init_db(db_path)
         scan_mod.scan(root, conn, "laptop", time.time_ns(), progress=_progress_printer())
+        retention_days = cfg.get("journal_retention_days", 90)
+        cutoff = time.time_ns() - int(retention_days * 86400 * 1e9)
+        min_cursor = conn.execute("SELECT COALESCE(MIN(last_seen_journal_id), 0) FROM sync_state").fetchone()[0]
+        db.prune_journal(conn, cutoff, min_cursor)
         print(file=sys.stderr)  # newline after the \r progress line
         conn.close()
         srv = server_mod.SyncServer(root, db_path, "laptop", port=port, apk_path=cfg["apk_path"])
