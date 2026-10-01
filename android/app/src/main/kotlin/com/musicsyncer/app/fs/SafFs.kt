@@ -113,6 +113,16 @@ class SafFs(private val context: Context, treeUri: Uri) : Fs {
         }
     }
 
+    override fun moveDir(oldDir: String, newDir: String) {
+        val target = doc(oldDir) ?: throw IOException("not found: $oldDir")
+        val newName = newDir.substringAfterLast('/')
+        require(oldDir.substringBeforeLast('/') == newDir.substringBeforeLast('/')) {
+            "SAF dir move must stay in the same parent: $oldDir -> $newDir"
+        }
+        if (!target.renameTo(newName)) throw IOException("dir rename failed: $oldDir -> $newDir")
+        dirCache.clear() // the whole subtree moved; cached docs are stale
+    }
+
     override fun exists(rel: String): Boolean = doc(rel) != null
 
     /** SAF content URI for [rel] (null if not found) — used to hand the file to an external player. */

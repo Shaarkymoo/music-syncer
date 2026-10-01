@@ -45,6 +45,21 @@ def apply_plan(root: Path, plan: Plan, conn, our_device: str, remote_device: str
     # Batch the journal/manifest writes into one transaction (bulk apply).
     prev_batch = db._batch_begin(conn)
     try:
+        # --- folder-level moves: rename the whole directory, then journal each file ---
+        for old_dir, new_dir, files in plan.moves:
+            if cancel and cancel():
+                raise SyncCancelled()
+            target = _resolve(root, old_dir)
+            if not target.is_dir() or (root / new_dir).exists():
+                continue
+            os.rename(target, root / new_dir)
+            for old_rel, new_rel, sha in files:
+                st = (root / new_rel).stat()
+                db.journal_append(conn, "DELETE", old_rel, None, None, now_ns, remote_device)
+                db.manifest_delete(conn, old_rel)
+                db.journal_append(conn, "CREATE", new_rel, st.st_size, sha, now_ns, remote_device)
+                db.manifest_upsert(conn, new_rel, st.st_size, st.st_mtime_ns, sha, now_ns)
+
         # --- conflict losers first: preserve our old bytes as hidden file,
         #     before the fetch overwrites the path with the winner ---
         for rel, ts_ns, _sha in plan.conflict_loser:

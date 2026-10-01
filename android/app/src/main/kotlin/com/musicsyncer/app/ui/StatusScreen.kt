@@ -18,6 +18,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -132,6 +133,11 @@ fun StatusScreen(vm: MusicViewModel) {
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            var movesOn by remember { mutableStateOf(vm.folderMovesEnabled) }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("Smart folder moves (experimental)", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Switch(checked = movesOn, onCheckedChange = { movesOn = it; vm.folderMovesEnabled = it })
+            }
         }
         pendingVersion?.let { v ->
             AlertDialog(

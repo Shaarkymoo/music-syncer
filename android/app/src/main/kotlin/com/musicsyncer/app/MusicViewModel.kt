@@ -38,6 +38,9 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     var serverToken: String?
         get() = prefs.getString("token", null)
         set(value) { prefs.edit().putString("token", value?.trim()?.ifEmpty { null }).apply() }
+    var folderMovesEnabled: Boolean
+        get() = prefs.getBoolean("folder_moves", false)
+        set(value) { prefs.edit().putBoolean("folder_moves", value).apply() }
 
     fun pickFolder(uri: Uri, name: String) {
         val app = getApplication<Application>()
@@ -59,7 +62,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
         _fs = fs
-        if (fs != null) _controller = SyncController(getApplication(), fs, store, prefs = prefs, freeSpaceProvider = { freeSpaceBytes() }, tokenProvider = { serverToken })
+        if (fs != null) _controller = SyncController(getApplication(), fs, store, prefs = prefs, freeSpaceProvider = { freeSpaceBytes() }, tokenProvider = { serverToken }, movesEnabledProvider = { folderMovesEnabled })
     }
 
     /** Rebuilds the Fs (and controller) after the audio permission is granted, so the fast path activates. */
@@ -69,7 +72,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val fs = buildFs(app, Uri.parse(uri))
             _fs = fs
-            _controller = SyncController(app, fs, store, prefs = prefs, freeSpaceProvider = { freeSpaceBytes() }, tokenProvider = { serverToken })
+            _controller = SyncController(app, fs, store, prefs = prefs, freeSpaceProvider = { freeSpaceBytes() }, tokenProvider = { serverToken }, movesEnabledProvider = { folderMovesEnabled })
         } catch (e: Exception) {
             // Grant is optional: keep the existing (slow) setup if the rebuild fails.
         }

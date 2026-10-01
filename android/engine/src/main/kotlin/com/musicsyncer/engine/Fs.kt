@@ -22,6 +22,8 @@ interface Fs {
     fun mkdirs(relDir: String)
     fun delete(rel: String)
     fun rename(rel: String, newRel: String)
+    /** Renames a whole directory to a sibling path (folder-level moves). */
+    fun moveDir(oldDir: String, newDir: String)
     fun exists(rel: String): Boolean
 }
 
@@ -82,6 +84,11 @@ class PathFs(private val root: Path) : Fs {
         val src = resolve(rel); val dst = resolve(newRel)
         Files.createDirectories(dst.parent)
         Files.move(src, dst, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    }
+    override fun moveDir(oldDir: String, newDir: String) {
+        val src = resolve(oldDir); val dst = resolve(newDir)
+        Files.createDirectories(dst.parent)
+        Files.move(src, dst, StandardCopyOption.ATOMIC_MOVE)
     }
     override fun exists(rel: String): Boolean = Files.exists(resolve(rel))
 }

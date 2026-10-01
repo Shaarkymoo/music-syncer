@@ -61,6 +61,7 @@ class HybridFs(
     override fun mkdirs(relDir: String) = saf.mkdirs(relDir)
     override fun delete(rel: String) = saf.delete(rel)
     override fun rename(rel: String, newRel: String) = saf.rename(rel, newRel)
+    override fun moveDir(oldDir: String, newDir: String) = saf.moveDir(oldDir, newDir)
     override fun exists(rel: String): Boolean = saf.exists(rel)
 
     private companion object { const val TAG = "MusicSyncer" }

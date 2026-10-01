@@ -144,3 +144,24 @@ class MergeTest {
         assertEquals("remotesha", store.manifestGet("A.mp3")?.sha256)
     }
 }
+@Test fun detectDirMovesCollapsesWholeDirectory() {
+    val plan = Plan(
+        fetch = mutableListOf(Triple("new/A.mp3", 1L, "sha1"), Triple("new/B.mp3", 1L, "sha2"), Triple("other/C.mp3", 1L, "sha3")),
+        delete = mutableListOf("old/A.mp3", "old/B.mp3", "other/C.mp3"),
+    )
+    detectDirMoves(plan, mapOf("old/A.mp3" to "sha1", "old/B.mp3" to "sha2", "other/C.mp3" to "sha3"))
+    assertEquals(listOf("old" to "new"), plan.moves.map { it.oldDir to it.newDir })
+    assertEquals(listOf("other/C.mp3"), plan.delete)          // same-dir mapping is not a move
+    assertEquals(listOf(Triple("other/C.mp3", 1L, "sha3")), plan.fetch)
+}
+
+@Test fun detectDirMovesLeavesPartialMatchesAlone() {
+    val plan = Plan(
+        fetch = mutableListOf(Triple("new/A.mp3", 1L, "sha1")),
+        delete = mutableListOf("old/A.mp3", "old/B.mp3"),
+    )
+    detectDirMoves(plan, mapOf("old/A.mp3" to "sha1"))  // B has no sha -> not 100%
+    assertEquals(true, plan.moves.isEmpty())
+    assertEquals(listOf("old/A.mp3", "old/B.mp3"), plan.delete)
+    assertEquals(listOf(Triple("new/A.mp3", 1L, "sha1")), plan.fetch)
+}

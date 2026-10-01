@@ -42,7 +42,7 @@ private fun httpBytes(client: OkHttpClient, url: String, method: String = "GET",
 }
 
 fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: String, progress: ProgressListener? = null,
-                   cancel: () -> Boolean = { false }, token: String? = null): SyncSummary {
+                   cancel: () -> Boolean = { false }, token: String? = null, detectMoves: Boolean = false): SyncSummary {
     val client = OkHttpClient()
     // Wall-clock epoch-ns (Python uses time.time_ns()); System.nanoTime() is
     // monotonic-since-boot and incomparable across devices, which would break
@@ -104,6 +104,7 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
 
     // 4. OUR plan: peer_cursor = how much of OUR journal the server has seen.
     val plan = buildPlan(ourManifest, ourOps, serverManifest, serverOps, serverCursorForUs, ourDevice)
+    if (detectMoves) detectDirMoves(plan, ourManifest.mapValues { it.value.third })
     val planItems = plan.fetch.map { it.first } + plan.delete + plan.conflictLoser.map { it.first }
     for ((i, rel) in planItems.withIndex()) emit(progress, SyncPhase.PLAN, i + 1, planItems.size, "")
     val remoteOps = serverOps.associate { it.path to it.op }

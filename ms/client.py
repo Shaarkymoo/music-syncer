@@ -26,7 +26,8 @@ def _http_get_bytes(url: str, token: str | None = None) -> bytes:
 
 
 def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str,
-                     progress: Progress | None = None, cancel=None, token: str | None = None) -> dict:
+                     progress: Progress | None = None, cancel=None, token: str | None = None,
+                     detect_moves: bool = False) -> dict:
     conn = db.init_db(db_path)
     now_ns = time.time_ns()
 
@@ -78,6 +79,8 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     #    peer_cursor = how much of OUR journal the peer (server) has seen.
     plan = merge.build_plan(our_manifest, our_ops, server_manifest, server_ops,
                             server_cursor_for_us, our_device)
+    if detect_moves:
+        merge.detect_dir_moves(plan, {p: h for p, (_s, _m, h) in our_manifest.items()})
     plan_items = [rel for rel, _s, _sha in plan.fetch]
     plan_items += list(plan.delete)
     plan_items += [rel for rel, _ts, _sha in plan.conflict_loser]

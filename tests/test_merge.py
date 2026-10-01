@@ -1,4 +1,4 @@
-from ms.merge import Plan, build_plan
+from ms.merge import Plan, build_plan, detect_dir_moves
 
 
 def _m(path, sha, size=10, mtime=5):
@@ -147,3 +147,19 @@ def test_adopt_shas_skips_recently_modified(tmp_path):
     db.manifest_upsert(conn, "A.mp3", 9, 3, None, 3)
     assert adopt.adopt_shas(conn, remote, root, 4, {"A.mp3"}) == []
     assert db.manifest_get(conn, "A.mp3")[2] is None
+
+def test_detect_dir_moves_collapses_whole_directory():
+    plan = Plan(fetch=[("new/A.mp3", 1, "sha1"), ("new/B.mp3", 1, "sha2"), ("other/C.mp3", 1, "sha3")],
+                delete=["old/A.mp3", "old/B.mp3", "other/C.mp3"])
+    local = {"old/A.mp3": "sha1", "old/B.mp3": "sha2", "other/C.mp3": "sha3"}
+    detect_dir_moves(plan, local)
+    assert plan.moves == [("old", "new", [("old/A.mp3", "new/A.mp3", "sha1"), ("old/B.mp3", "new/B.mp3", "sha2")])]
+    assert plan.delete == ["other/C.mp3"]     # same-dir mapping is not a move
+    assert plan.fetch == [("other/C.mp3", 1, "sha3")]
+
+
+def test_detect_dir_moves_leaves_partial_matches_alone():
+    plan = Plan(fetch=[("new/A.mp3", 1, "sha1")], delete=["old/A.mp3", "old/B.mp3"])
+    detect_dir_moves(plan, {"old/A.mp3": "sha1"})  # B has no sha -> not 100%
+    assert plan.moves == []
+    assert plan.delete == ["old/A.mp3", "old/B.mp3"]

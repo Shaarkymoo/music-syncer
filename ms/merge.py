@@ -7,6 +7,50 @@ class Plan:
     push: list[tuple[str, int, str | None]] = field(default_factory=list)   # remote needs our bytes
     delete: list[str] = field(default_factory=list)
     conflict_loser: list[tuple[str, int, str | None]] = field(default_factory=list)  # (path, ts_ns, sha256)
+    # whole-directory moves: (old_dir, new_dir, [(old_rel, new_rel, sha), ...])
+    moves: list[tuple[str, str, list[tuple[str, str, str | None]]]] = field(default_factory=list)
+
+
+def detect_dir_moves(plan: Plan, local_sha_by_path: dict[str, str | None]) -> Plan:
+    """Collapse a whole-directory {delete old, fetch new} pair into one move when
+    every file under an old_dir maps 1:1 by sha to a file under a sibling new_dir
+    (same parent) — the restructure case. Removes moved items from fetch/delete.
+    Conservative: anything less than 100% stays per-file."""
+    fetch_by_sha = {sha: rel for rel, _s, sha in plan.fetch if sha}
+    delete_by_dir: dict[str, list[str]] = {}
+    for rel in plan.delete:
+        old_dir = rel.rsplit("/", 1)[0] if "/" in rel else ""
+        delete_by_dir.setdefault(old_dir, []).append(rel)
+    moved: set[str] = set()
+    for old_dir, old_paths in delete_by_dir.items():
+        if not old_dir or len(old_paths) < 2:
+            continue
+        mappings: list[tuple[str, str, str | None]] = []
+        ok = True
+        for old in old_paths:
+            sha = local_sha_by_path.get(old)
+            new = fetch_by_sha.get(sha) if sha else None
+            if new is None or (new.rsplit("/", 1)[0] if "/" in new else "") == old_dir:
+                ok = False
+                break
+            mappings.append((old, new, sha))
+        if not ok or len(mappings) != len(old_paths):
+            continue
+        new_dirs = {new.rsplit("/", 1)[0] if "/" in new else "" for _old, new, _s in mappings}
+        if len(new_dirs) != 1:
+            continue
+        new_dir = new_dirs.pop()
+        if (new_dir.rsplit("/", 1)[0] if "/" in new_dir else "") != (old_dir.rsplit("/", 1)[0] if "/" in old_dir else ""):
+            continue
+        if len({new for _old, new, _s in mappings}) != len(mappings):
+            continue
+        plan.moves.append((old_dir, new_dir, mappings))
+        moved.update(old for old, _new, _s in mappings)
+        moved.update(new for _old, new, _s in mappings)
+    if moved:
+        plan.delete = [r for r in plan.delete if r not in moved]
+        plan.fetch = [f for f in plan.fetch if f[0] not in moved]
+    return plan
 
 
 def _latest_op_by_path(journal: list[dict]) -> dict[str, dict]:

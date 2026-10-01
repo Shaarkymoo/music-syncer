@@ -56,6 +56,22 @@ fun applyPlan(
         }
     }
 
+    // --- folder-level moves: rename the whole directory, then journal each file ---
+    store.withBatch {
+        for ((oldDir, newDir, files) in plan.moves) {
+            if (isCancelled()) throw SyncCancelledException()
+            if (!fs.exists(oldDir) || fs.exists(newDir)) continue
+            fs.moveDir(oldDir, newDir)
+            for ((oldRel, newRel, sha) in files) {
+                val entry = fs.stat(newRel)
+                store.journalAppend("DELETE", oldRel, null, null, nowNs, remoteDevice)
+                store.manifestDelete(oldRel)
+                store.journalAppend("CREATE", newRel, entry.size, sha, nowNs, remoteDevice)
+                store.manifestUpsert(newRel, entry.size, entry.mtimeNs, sha, nowNs)
+            }
+        }
+    }
+
     val fetchItems = plan.fetch.sortedBy { it.first }
     val deleteItems = plan.delete.sorted()
     val total = fetchItems.size + deleteItems.size
