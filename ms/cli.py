@@ -34,6 +34,8 @@ def _args() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
     scan_p = sub.add_parser("scan", parents=[parent])
     scan_p.add_argument("--path", required=True)
+    scan_p.add_argument("--hash", action="store_true",
+                        help="hash every file into the manifest (use after restructuring the library)")
     serve_p = sub.add_parser("serve", parents=[parent])
     serve_p.add_argument("--path", required=True)
     serve_p.add_argument("--port", type=int, default=None)
@@ -53,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         root = Path(args.path)
         conn = db.init_db(db_path)
         head_before = db.journal_head(conn)
-        scan_mod.scan(root, conn, "laptop", time.time_ns(), progress=_progress_printer())
+        scan_mod.scan(root, conn, "laptop", time.time_ns(), progress=_progress_printer(), hash_files=args.hash)
         print(file=sys.stderr)  # newline after the \r progress line
         for op in db.journal_since(conn, head_before):
             ts = datetime.fromtimestamp(op["ts_ns"] / 1e9, tz=timezone.utc).isoformat(timespec="seconds")

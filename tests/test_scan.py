@@ -86,3 +86,21 @@ def test_scan_skips_dotfiles_and_cleans_partials(tmp_path: Path):
     assert not (root / ".ms-partial-1234-A.mp3").exists()  # crash residue removed
     assert db.journal_head(conn) == 0  # nothing journaled
     conn.close()
+
+
+def test_scan_with_hash_fills_manifest_shas(tmp_path: Path):
+    root = tmp_path / "root"
+    (root / "Rock").mkdir(parents=True)
+    (root / "Rock" / "A.mp3").write_bytes(b"content-a")
+    conn = _conn(tmp_path)
+    scan.scan(root, conn, "laptop", 1000, hash_files=True)
+    row = db.manifest_get(conn, "Rock/A.mp3")
+    assert row[2] is not None  # hashed, not lazy
+    # journal ops stay lazy (NULL sha): conflict tracking doesn't need the hash
+    ops = db.journal_since(conn, 0)
+    assert ops[0]["sha256"] is None
+    # re-run: already hashed file is not re-journaled
+    head = db.journal_head(conn)
+    scan.scan(root, conn, "laptop", 2000, hash_files=True)
+    assert db.journal_head(conn) == head
+    conn.close()
