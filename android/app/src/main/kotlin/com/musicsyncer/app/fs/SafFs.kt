@@ -97,6 +97,7 @@ class SafFs(private val context: Context, treeUri: Uri) : Fs {
 
     override fun delete(rel: String) {
         doc(rel)?.delete()
+        dirCache.remove(rel)
     }
 
     override fun rename(rel: String, newRel: String) {

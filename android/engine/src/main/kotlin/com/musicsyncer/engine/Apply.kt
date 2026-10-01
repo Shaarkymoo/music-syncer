@@ -60,7 +60,13 @@ fun applyPlan(
     store.withBatch {
         for ((oldDir, newDir, files) in plan.moves) {
             if (isCancelled()) throw SyncCancelledException()
-            if (!fs.exists(oldDir) || fs.exists(newDir)) continue
+            if (!fs.exists(oldDir)) continue
+            // A leftover EMPTY newDir (mkdirs from a crashed copy) must be
+            // dropped first, or the rename is skipped as 'already there'.
+            if (fs.exists(newDir)) {
+                if (fs.listDir(newDir).isNotEmpty()) continue
+                fs.delete(newDir)
+            }
             fs.moveDir(oldDir, newDir)
             for ((oldRel, newRel, sha) in files) {
                 val entry = fs.stat(newRel)
