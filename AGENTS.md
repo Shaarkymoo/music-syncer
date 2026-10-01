@@ -220,12 +220,13 @@ $ADB shell run-as com.musicsyncer.app cat databases/music-sync.db > /tmp/phone.d
 - **Phase 3 PLANNED — optimization & capability pass.** Scope, tasks, tools,
   and constraints: `docs/superpowers/plans/2026-10-02-phase3-optimizations.md`.
   Confirmed: parallel bulk ops, opt-in folder-move detection, batched DB
-  writes, concurrent transfers, wake-lock + free-space, conflict viewer, mDNS
-  retry, journal prune (90d, cursor-guarded), multi-select, new-playlist +
-  counts in move dialog, sorting, playlist rename/create, ETA + empty states,
-  stop button, shared-token auth. Pending (Phase 3b): conflict restore, .m3u
-  export, library stats, tag extras, light theme. **Do NOT start implementing
-  without a fresh session reading AGENTS.md + the plan.**
+  writes, concurrent transfers, wake-lock + free-space, conflict viewer
+  (Listen/Keep/Delete), mDNS retry, journal prune (90d, cursor-guarded),
+  multi-select, new-playlist + counts in move dialog, sorting, playlist
+  rename/create, ETA + empty states, stop button, shared-token auth, library
+  stats screen, tag-editor extras (year/composer/track-total), per-playlist
+  .m3u export. Out: album art, conflict restore, light theme. **Do NOT start
+  implementing without a fresh session reading AGENTS.md + the plan.**
 - Known remaining work: shared-token auth (Phase 3 Task 15), stop-scan button
   (Phase 3 Task 14), conflict viewer (Task 6), any follow-ups from the real
   sync test.

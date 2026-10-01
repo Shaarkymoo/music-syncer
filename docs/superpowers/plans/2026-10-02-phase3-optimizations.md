@@ -8,11 +8,12 @@
 
 **Confirmed scope (this plan):**
 - **Speed:** parallel bulk ops (copies/deletes/transfers) · opt-in folder-level move detection · batched DB writes
-- **Reliability:** wake-lock + free-space check · conflict viewer · mDNS retry + last-known server · journal pruning
+- **Reliability:** wake-lock + free-space check · conflict viewer (Listen/Keep/Delete — NO restore) · mDNS retry + last-known server · journal pruning
 - **UI/UX:** multi-select · move-dialog song counts + "new playlist" · sorting + folder counts · playlist create/rename · progress ETA · empty states + completion notification
 - **Capability:** stop-scan/sync button · shared-token auth
+- **Stats & tags:** library stats screen (songs/size/per-playlist/sync history) · tag-editor extras (year, composer, track N/total — no artwork) · per-playlist `.m3u` export
 
-**Deferred / out of scope:** album art (user skipped), conflict *restore* workflow (Phase 3b), .m3u export / stats / tag extras / theme-follows-system (Phase 3b), trash/recycle, auto-sync, move-heuristics beyond the opt-in folder mode, multiple devices.
+**Explicitly out of scope:** album art (user skipped), conflict *restore* (user chose viewer without restore), light theme (keeps black+orange dark-only), trash/recycle, auto-sync, move-heuristics beyond the opt-in folder mode, multiple devices.
 
 **Architecture:** The engine is two identical implementations (Python `ms/` laptop daemon, Kotlin `android/engine/` phone brain) with strict parity enforced by interop tests. Per-file SAF I/O is the phone's bottleneck (~0.5-1 s/op); parallelism and whole-folder moves attack it. All UI work is Compose in `android/app/`. The wire protocol stays unchanged except the auth token (Task 15).
 
@@ -203,20 +204,41 @@ tests: mirror each change in tests/ + engine tests; app tests for pure logic.
 
 **Acceptance:** no token → handshake 200 (says auth required) but /sync 401; correct token → full session works; interop test covers the 401 path.
 
+## Task 16: Library stats screen (app)
+
+**Files:** `ui/StatsScreen.kt` (new) + nav wiring; reads `store.manifestAll()` + journal.
+
+**Interfaces:** total songs, total size, per-playlist song counts (folders under `playlists/`), last-sync time, and a compact sync-history view (recent `DONE` sessions with per-phase timing from the persisted summary). Reuses the fast list for folder counts.
+
+**Acceptance:** counts match `fs.list()`; renders on real data; empty state before the first sync.
+
+## Task 17: Tag-editor extras (app)
+
+**Files:** `tag/TagEditor.kt`, `ui/EditorScreen.kt` + tests.
+
+**Interfaces:** add `year`, `composer`, `trackTotal` to `SongTags`; write via `FieldKey.YEAR`, `FieldKey.COMPOSER`, and `TRCK` as `N/total`; read them back. No artwork.
+
+**Acceptance:** roundtrip test on a temp mp3 (title/artist/…/year/composer/track-total); existing editor layout unchanged otherwise.
+
+## Task 18: Per-playlist `.m3u` export (app)
+
+**Files:** `ui/BrowserScreen.kt` (or playlist context menu), a small `M3uWriter` (pure fn, testable).
+
+**Interfaces:** from a playlist folder's context menu, "Export .m3u" writes `playlists/<name>/<name>.m3u` with one song file name per line (EXTM3U header). The exported file itself syncs to the laptop like any other file (engine treats it as a normal file — harmless). Note: this is a convenience export for external players, not a Samsung-Music playlist (it has its own DB).
+
+**Acceptance:** writer unit test; the file appears in Browse and syncs.
+
 ---
 
-## Phase 3b — pending scope confirmation (NOT started)
+## Explicitly out of scope (user decisions)
 
-19. **Conflict *resolution***: beyond the viewer (Task 6), a **Restore** action (replace the winner with the conflict file — last-writer-wins reversed) is risky; recommend deferring unless conflicts actually occur.
-20. **The rest of #20**, user to pick:
-    - `.m3u` playlist export — only useful if an external player imports it (Samsung Music uses its own DB; low value here).
-    - **Library stats** screen (songs/size/per-playlist/sync history) — cheap, recommended.
-    - **Tag editor extras** (year, composer, track N/total) — cheap, recommended; artwork stays out (matches #13 skip).
-    - **Theme follows system** (light mode) — contradicts the locked black+orange aesthetic; recommend keeping dark-only.
+- Conflict **restore** (reversing LWW) — viewer is Listen/Keep/Delete only.
+- Light theme / theme-follows-system — black+orange dark stays.
+- Album art in any form (browse/editor).
 
 ## Test counts expected after Phase 3
 
-Python 81+ (auth, prune, moves, concurrent, cancellation) · engine 70+ · app 28+ (multi-select logic, batch, conflicts filter, ETA, free-space). Full suites + interop must pass; `ms verify` unaffected.
+Python 81+ (auth, prune, moves, concurrent, cancellation) · engine 70+ · app 28+ (multi-select logic, batch, conflicts filter, ETA, free-space, stats, m3u writer, tag roundtrip). Full suites + interop must pass; `ms verify` unaffected.
 
 ## Priorities / order of execution
 
