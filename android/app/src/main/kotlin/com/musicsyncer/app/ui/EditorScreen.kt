@@ -60,12 +60,18 @@ fun EditorScreen(vm: MusicViewModel, rel: String, onClose: () -> Unit) {
     var loadError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
+    var fileInfo by remember { mutableStateOf<Pair<Long, Long>?>(null) } // (size, mtimeNs)
+    var addedDate by remember { mutableStateOf<Long?>(null) }            // epoch seconds from the media index
 
     LaunchedEffect(rel, fs) {
         if (fs == null) return@LaunchedEffect
         loadError = null
         try {
-            form = withContext(Dispatchers.IO) { TagEditor.read(fs, rel) }
+            withContext(Dispatchers.IO) {
+                fileInfo = fs.stat(rel).let { it.size to it.mtimeNs }
+                addedDate = vm.mediaAddedDate(rel)
+                form = TagEditor.read(fs, rel)
+            }
         } catch (e: Exception) {
             loadError = e.message ?: "Failed to read tags"
         }
@@ -123,6 +129,18 @@ fun EditorScreen(vm: MusicViewModel, rel: String, onClose: () -> Unit) {
 
                 else -> {
                     val tags = form!!
+                    fileInfo?.let { (size, mtimeNs) ->
+                        val lines = buildList {
+                            add("Size: %.1f MB".format(size / 1_048_576.0))
+                            add("Modified: ${formatDate(mtimeNs / 1_000_000)}")
+                            addedDate?.let { add("Added to library: ${formatDate(it * 1_000)}") }
+                        }
+                        Text(
+                            lines.joinToString("  ·  "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     TagField("Title", tags.title) { form = tags.copy(title = it) }
                     TagField("Artist", tags.artist) { form = tags.copy(artist = it) }
                     TagField("Album", tags.album) { form = tags.copy(album = it) }
@@ -170,3 +188,6 @@ private fun TagField(label: String, value: String?, onChange: (String) -> Unit) 
         singleLine = true,
     )
 }
+
+private fun formatDate(epochMs: Long): String =
+    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(epochMs))

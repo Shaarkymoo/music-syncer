@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -85,15 +86,11 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
     var menuRel by remember { mutableStateOf<String?>(null) }   // song whose action menu is open
     var renameRel by remember { mutableStateOf<String?>(null) } // song being renamed
     var deleteRel by remember { mutableStateOf<String?>(null) } // song awaiting delete confirmation
-    var moveRel by remember { mutableStateOf<String?>(null) }   // song being moved (non-null = move-picker mode)
-    var moveTargetDir by remember { mutableStateOf("") }        // folder navigated to while picking a move target
+    var moveRel by remember { mutableStateOf<String?>(null) }   // song awaiting playlist pick
     var error by remember { mutableStateOf<String?>(null) }
 
-    // While picking a move target the tree navigates moveTargetDir instead of dir.
-    val currentDir = if (moveRel != null) moveTargetDir else dir
-
-    val entries by produceState(initialValue = emptyList<BrowserEntry>(), currentDir, refreshTick, fs) {
-        val result = withContext(Dispatchers.IO) { runCatching { fs.listDir(currentDir) } }
+    val entries by produceState(initialValue = emptyList<BrowserEntry>(), dir, refreshTick, fs) {
+        val result = withContext(Dispatchers.IO) { runCatching { fs.listDir(dir) } }
         result.exceptionOrNull()?.let { error = it.message ?: "Failed to list folder" }
         val children = result.getOrDefault(emptyList())
         val songs = children.filter { !it.isDirectory }
@@ -107,7 +104,7 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
 
     fun navigateTo(target: String) {
         menuRel = null
-        if (moveRel != null) moveTargetDir = target else dir = target
+        dir = target
     }
 
     /** Runs a file operation off the main thread, journals it, then reloads the tree. */
@@ -126,10 +123,7 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
         }
     }
 
-    fun startMove(rel: String) {
-        moveRel = rel
-        moveTargetDir = rel.substringBeforeLast('/') // start at the song's current folder
-    }
+    fun startMove(rel: String) { moveRel = rel }
 
     fun confirmRename(rel: String, newName: String) {
         val newRel = dirPrefix(rel.substringBeforeLast('/')) + newName
@@ -142,10 +136,11 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
         runOp { fs.delete(rel) }
     }
 
-    fun confirmMove(rel: String) {
-        val targetRel = dirPrefix(moveTargetDir) + rel.substringAfterLast('/')
+    /** Copies the song into the target playlist folder and removes the original (SAF can only rename within a dir). */
+    fun confirmMove(rel: String, playlist: String) {
+        val targetRel = "playlists/$playlist/${rel.substringAfterLast('/')}"
         moveRel = null
-        if (targetRel == rel) return // already in the target folder
+        if (targetRel == rel) return // already in that playlist
         runOp {
             fs.write(targetRel, fs.read(rel))
             fs.delete(rel)
@@ -158,37 +153,51 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (currentDir.isNotEmpty()) {
-                IconButton(onClick = { navigateTo(currentDir.substringBeforeLast('/')) }) {
+            if (dir.isNotEmpty()) {
+                IconButton(onClick = { navigateTo(dir.substringBeforeLast('/')) }) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Up")
                 }
             }
             Breadcrumb("Root") { navigateTo("") }
             var acc = ""
-            for (part in currentDir.split('/')) {
+            for (part in dir.split('/')) {
                 Text(" / ")
                 acc = if (acc.isEmpty()) part else "$acc/$part"
                 Breadcrumb(part) { navigateTo(acc) }
             }
         }
 
-        // Move-picker banner: choose a destination folder, then confirm.
+        // Move-to-playlist dialog: pick one target playlist, stay on this folder.
         moveRel?.let { rel ->
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Moving \"${rel.substringAfterLast('/')}\"", style = MaterialTheme.typography.titleSmall)
-                    Text("Pick a destination folder, then confirm.", style = MaterialTheme.typography.bodySmall)
+            val playlists by produceState(initialValue = emptyList<String>(), fs) {
+                value = withContext(Dispatchers.IO) {
+                    runCatching { fs.listDir("playlists") }.getOrDefault(emptyList())
+                        .filter { it.isDirectory }
+                        .map { it.rel.substringAfterLast('/') }
+                        .sorted()
                 }
-                Button(
-                    onClick = { confirmMove(rel) },
-                    enabled = dirPrefix(moveTargetDir) + rel.substringAfterLast('/') != rel,
-                ) { Text("Move here") }
-                TextButton(onClick = { moveRel = null }) { Text("Cancel") }
             }
+            AlertDialog(
+                onDismissRequest = { moveRel = null },
+                title = { Text("Move \"${rel.substringAfterLast('/')}\" to playlist") },
+                text = {
+                    if (playlists.isEmpty()) {
+                        Text("No playlists found under playlists/")
+                    } else {
+                        LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                            items(playlists) { name ->
+                                val alreadyThere = rel.substringBeforeLast('/') == "playlists/$name"
+                                TextButton(
+                                    onClick = { confirmMove(rel, name) },
+                                    enabled = !alreadyThere,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) { Text(name, Modifier.fillMaxWidth()) }
+                            }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = { moveRel = null }) { Text("Cancel") } },
+            )
         }
 
         error?.let {
@@ -199,7 +208,7 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
             items(entries, key = { (if (it is BrowserEntry.Dir) "d:" else "s:") + it.name }) { entry ->
                 when (entry) {
                     is BrowserEntry.Dir -> Row(
-                        Modifier.fillMaxWidth().clickable { navigateTo(dirPrefix(currentDir) + entry.name) }
+                        Modifier.fillMaxWidth().clickable { navigateTo(dirPrefix(dir) + entry.name) }
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -210,7 +219,8 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
                     is BrowserEntry.Song -> SongRow(
                         entry = entry,
                         menuOpen = menuRel == entry.entry.rel,
-                        enabled = moveRel == null,
+                        enabled = true,
+                        onPlay = { vm.playInExternalPlayer(entry.entry.rel) },
                         onOpenMenu = { menuRel = entry.entry.rel },
                         onDismissMenu = { menuRel = null },
                         onRename = { renameRel = entry.entry.rel },
@@ -246,6 +256,7 @@ private fun SongRow(
     entry: BrowserEntry.Song,
     menuOpen: Boolean,
     enabled: Boolean,
+    onPlay: () -> Unit,
     onOpenMenu: () -> Unit,
     onDismissMenu: () -> Unit,
     onRename: () -> Unit,
@@ -259,7 +270,12 @@ private fun SongRow(
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+            Icon(
+                Icons.Filled.PlayArrow,
+                contentDescription = "Play in external player",
+                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.clickable { onPlay() },
+            )
             Column(Modifier.padding(start = 12.dp).weight(1f)) {
                 Text(entry.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(formatSize(entry.entry.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -267,7 +283,7 @@ private fun SongRow(
         }
         DropdownMenu(expanded = menuOpen, onDismissRequest = onDismissMenu) {
             DropdownMenuItem(text = { Text("Rename") }, onClick = { onDismissMenu(); onRename() })
-            DropdownMenuItem(text = { Text("Move to folder") }, onClick = { onDismissMenu(); onMove() })
+            DropdownMenuItem(text = { Text("Move to playlist") }, onClick = { onDismissMenu(); onMove() })
             DropdownMenuItem(text = { Text("Edit metadata") }, onClick = { onDismissMenu(); onEdit() })
             DropdownMenuItem(text = { Text("Delete") }, onClick = { onDismissMenu(); onDelete() })
         }

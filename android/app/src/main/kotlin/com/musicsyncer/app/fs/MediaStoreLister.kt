@@ -1,6 +1,8 @@
 package com.musicsyncer.app.fs
 
+import android.content.ContentUris
 import android.content.Context
+import android.net.Uri
 import android.provider.MediaStore
 import android.util.Log
 import com.musicsyncer.engine.FsEntry
@@ -80,6 +82,31 @@ class MediaStoreLister(
         }
         Log.i(TAG, "list(volume=$volumeId, relPath=$relPath) -> ${out.size} rows in ${(System.nanoTime() - t0) / 1_000_000}ms; sample=${out.take(3).map { it.rel }}")
         return out.distinctBy { it.rel }
+    }
+
+    /** MediaStore content URI + "added to library" date (epoch seconds) for [rel], or null if not indexed. */
+    fun entry(rel: String): Pair<Uri, Long>? {
+        val projection = arrayOf(
+            MediaStore.Audio.Media._ID,
+            MediaStore.Audio.Media.DISPLAY_NAME,
+            MediaStore.Audio.Media.RELATIVE_PATH,
+            MediaStore.Audio.Media.DATE_ADDED,
+        )
+        val selection = "${MediaStore.Audio.Media.RELATIVE_PATH} LIKE ? AND ${MediaStore.Audio.Media.DISPLAY_NAME} = ?"
+        val args = arrayOf("$relPath/${rel.substringBeforeLast('/', "")}/%", rel.substringAfterLast('/'))
+        val uri = MediaStore.Audio.Media.getContentUri(volumeId)
+        context.contentResolver.query(uri, projection, selection, args, null)?.use { c ->
+            val idCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media._ID)
+            val nameCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DISPLAY_NAME)
+            val pathCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.RELATIVE_PATH)
+            val addedCol = c.getColumnIndexOrThrow(MediaStore.Audio.Media.DATE_ADDED)
+            while (c.moveToNext()) {
+                if (c.getString(pathCol) + c.getString(nameCol) == "$relPath/$rel") {
+                    return ContentUris.withAppendedId(uri, c.getLong(idCol)) to c.getLong(addedCol)
+                }
+            }
+        }
+        return null
     }
 
     private companion object { const val TAG = "MusicSyncer" }

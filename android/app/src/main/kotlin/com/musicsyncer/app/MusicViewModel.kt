@@ -2,6 +2,7 @@ package com.musicsyncer.app
 
 import android.Manifest
 import android.app.Application
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -28,6 +29,8 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     private var _fs: Fs? = null
     val fs: Fs? get() = _fs
+    private var _saf: SafFs? = null
+    private var _lister: MediaStoreLister? = null
     private var _controller: SyncController? = null
     val controller: SyncController? get() = _controller
     val folderName: String? get() = prefs.getString("folder_name", null)
@@ -52,7 +55,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
         _fs = fs
-        if (fs != null) _controller = SyncController(getApplication(), fs, store)
+        if (fs != null) _controller = SyncController(getApplication(), fs, store, prefs = prefs)
     }
 
     /** Rebuilds the Fs (and controller) after the audio permission is granted, so the fast path activates. */
@@ -62,7 +65,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val fs = buildFs(app, Uri.parse(uri))
             _fs = fs
-            _controller = SyncController(app, fs, store)
+            _controller = SyncController(app, fs, store, prefs = prefs)
         } catch (e: Exception) {
             // Grant is optional: keep the existing (slow) setup if the rebuild fails.
         }
@@ -70,7 +73,9 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun buildFs(app: Application, uri: Uri): Fs {
         val saf = SafFs(app, uri)
+        _saf = saf
         val lister = fastLister(app, uri)
+        _lister = lister
         Log.i(TAG, if (lister != null) "buildFs: HybridFs active (volume=${lister.volumeId}, relPath=${lister.relPath})" else "buildFs: plain SafFs (no fast path)")
         return lister?.let { HybridFs(saf, it, store) } ?: saf
     }
@@ -83,6 +88,22 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         val (volume, relPath) = volumeAndPath(treeId) ?: return null
         return MediaStoreLister(app, volume, relPath)
     }
+
+    /** Hands [rel] to an external audio player (Samsung Music) via ACTION_VIEW, preferring its MediaStore URI. */
+    fun playInExternalPlayer(rel: String) {
+        val app = getApplication<Application>()
+        val uri = _lister?.entry(rel)?.first ?: _saf?.uriFor(rel) ?: return
+        val intent = Intent(Intent.ACTION_VIEW).setDataAndType(uri, "audio/*")
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        try {
+            app.startActivity(Intent.createChooser(intent, "Play with"))
+        } catch (e: Exception) {
+            Log.w(TAG, "no audio player for $rel: ${e.message}")
+        }
+    }
+
+    /** Epoch seconds when the media index first saw [rel] (null if not indexed / no permission). */
+    fun mediaAddedDate(rel: String): Long? = _lister?.entry(rel)?.second
 
     override fun onCleared() {
         discovery.close()

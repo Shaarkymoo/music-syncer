@@ -100,6 +100,9 @@ class SafFs(private val context: Context, treeUri: Uri) : Fs {
 
     override fun exists(rel: String): Boolean = doc(rel) != null
 
+    /** SAF content URI for [rel] (null if not found) — used to hand the file to an external player. */
+    fun uriFor(rel: String): Uri? = doc(rel)?.uri
+
     private fun uri(rel: String): Uri {
         val d = doc(rel) ?: throw IOException("not found: $rel")
         return d.uri

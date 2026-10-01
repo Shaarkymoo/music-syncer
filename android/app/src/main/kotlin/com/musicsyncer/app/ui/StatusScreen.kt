@@ -104,12 +104,12 @@ fun StatusScreen(vm: MusicViewModel) {
             }
         }
         vm.controller?.let { c ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { c.scan() }, enabled = !(state?.busy ?: false)) { Text("Scan") }
-                Button(onClick = { c.sync(c.state.value.server) }, enabled = !(state?.busy ?: false)) { Text("Sync") }
-                Button(onClick = { c.verify() }, enabled = !(state?.busy ?: false)) { Text("Verify") }
+            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ActionButton("Scan", "See what changed in your music folder", enabled = !(state?.busy ?: false)) { c.scan() }
+                ActionButton("Sync", "Mirror this folder with the laptop", enabled = !(state?.busy ?: false)) { c.sync(c.state.value.server) }
+                ActionButton("Verify", "Check files match the stored checksums", enabled = !(state?.busy ?: false)) { c.verify() }
+                ActionButton("Find laptop & sync", "Find the laptop, then sync", enabled = !(state?.busy ?: false)) { c.discover { vm.discovery.find() } }
             }
-            Button(onClick = { c.discover { vm.discovery.find() } }, enabled = !(state?.busy ?: false)) { Text("Find laptop & sync") }
             TextButton(onClick = {
                 scope.launch {
                     val url = c.state.value.server
@@ -236,6 +236,14 @@ private fun blankRelLabel(progress: ProgressState?): String = when {
 private fun fastSyncAvailable(context: android.content.Context): Boolean =
     Build.VERSION.SDK_INT >= 33 &&
         ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
+
+@Composable
+private fun ActionButton(label: String, caption: String, enabled: Boolean, onClick: () -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Button(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text(label) }
+        Text(caption, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
 
 /** Indeterminate "looking for laptop" line shown while mDNS discovery runs. */
 @Composable

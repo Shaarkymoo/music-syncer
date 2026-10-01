@@ -48,16 +48,31 @@ class SyncController(
     private val fs: Fs,
     private val store: SyncStore,
     private val ourDevice: String = "phone",
+    private val prefs: android.content.SharedPreferences? = null,
 ) {
-    private val _state = MutableStateFlow(SyncState())
+    private val _state = MutableStateFlow(
+        SyncState(
+            server = prefs?.getString("state_server", null),
+            lastSync = prefs?.getString("state_last_sync", null),
+            lastSummary = prefs?.getString("state_last_summary", null),
+        ),
+    )
     val state: StateFlow<SyncState> = _state
     private val scope = CoroutineScope(Dispatchers.IO)
+
+    private fun persist(s: SyncState) {
+        prefs?.edit()
+            ?.putString("state_server", s.server)
+            ?.putString("state_last_sync", s.lastSync)
+            ?.putString("state_last_summary", s.lastSummary)
+            ?.apply()
+    }
 
     /** Monotonic start of the current phase, for per-stage elapsed timing. */
     private var phaseStartNs = 0L
     private var lastPhase: SyncPhase? = null
 
-    fun setServer(url: String) { _state.value = _state.value.copy(server = url) }
+    fun setServer(url: String) { persist(_state.value.copy(server = url)); _state.value = _state.value.copy(server = url) }
 
     /** Elapsed ms since the current phase started; resets on a phase change or the scan walk marker. */
     private fun trackPhase(phase: SyncPhase, done: Int, total: Int, rel: String): Long {
@@ -132,7 +147,7 @@ class SyncController(
         _state.value = _state.value.copy(
             lastSync = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date()),
             lastSummary = "fetched ${summary.fetched.size}, copied ${summary.copied.size}, pushed ${summary.pushed.size}, deleted ${summary.deleted.size}, conflicts ${summary.conflicts.size}",
-        )
+        ).also { persist(it) }
     }
 
     fun verify() {
@@ -151,7 +166,7 @@ class SyncController(
                 }
                 _state.value = _state.value.copy(
                     lastSummary = if (mismatches.isEmpty()) "OK: all files match stored hashes" else "MISMATCH: ${mismatches.joinToString { it.path }}",
-                )
+                ).also { persist(it) }
             } catch (e: Exception) {
                 _state.value = _state.value.copy(error = e.message ?: e.javaClass.simpleName)
             } finally {
