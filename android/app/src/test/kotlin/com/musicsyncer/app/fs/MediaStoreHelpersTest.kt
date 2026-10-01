@@ -80,4 +80,20 @@ class MediaStoreHelpersTest {
         assertEquals(null, mediaStoreRowToEntry("my songs", "my songs/", null, 5, 2L))
         assertEquals(null, mediaStoreRowToEntry("my songs", "my songs/", "D.mp3", -1, 2L))
     }
+
+    @Test fun deriveDirEntriesBuildsSingleLevelFromFullList() {
+        val files = listOf(
+            FsEntry("engsongs/A.mp3", 1, 1),
+            FsEntry("engsongs/sub/B.mp3", 2, 1),
+            FsEntry("C.mp3", 3, 1),
+        )
+        val root = deriveDirEntries("", files)
+        assertEquals(setOf("C.mp3", "engsongs"), root.map { it.rel }.toSet())
+        assertEquals(false, root.first { it.rel == "C.mp3" }.isDirectory)
+        assertEquals(true, root.first { it.rel == "engsongs" }.isDirectory)
+        val engsongs = deriveDirEntries("engsongs", files)
+        assertEquals(setOf("engsongs/A.mp3", "engsongs/sub"), engsongs.map { it.rel }.toSet())
+        assertEquals(true, engsongs.first { it.rel == "engsongs/sub" }.isDirectory)
+        assertEquals(1L, engsongs.first { it.rel == "engsongs/A.mp3" }.size)
+    }
 }

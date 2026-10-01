@@ -25,9 +25,12 @@ class HybridFs(
     private val lister: MediaStoreLister,
     private val store: SyncStore,
 ) : Fs {
+    private var lastListerSnapshot: List<FsEntry>? = null
+
     override fun list(): List<FsEntry> {
         val t0 = System.nanoTime()
-        val listed = lister.list().associateBy { it.rel }.toMutableMap()
+        val ms = lister.list()
+        val listed = ms.associateBy { it.rel }.toMutableMap()
         var fallback = 0
         for (m in store.manifestAll()) {
             if (m.path in listed) continue
@@ -36,12 +39,21 @@ class HybridFs(
                 fallback++
             }
         }
-        baselineMtimes(store, listed.values.toList())
+        // The baseline only needs to run when the index output changed: the
+        // per-row manifest reads cost ~2s on 6k files, and after the first run
+        // nothing is sub-second-different anymore.
+        if (ms != lastListerSnapshot) {
+            baselineMtimes(store, listed.values.toList())
+            lastListerSnapshot = ms
+        }
         Log.i(TAG, "HybridFs.list: ${listed.size} total (${fallback} SAF-fallback) in ${(System.nanoTime() - t0) / 1_000_000}ms")
         return listed.values.toList()
     }
 
-    override fun listDir(rel: String): List<FsDirEntry> = saf.listDir(rel)
+    override fun listDir(rel: String): List<FsDirEntry> {
+        val entries = deriveDirEntries(rel, lister.list())
+        return entries.ifEmpty { saf.listDir(rel) } // permission revoked mid-session: SAF fallback
+    }
     override fun stat(rel: String): FsEntry = saf.stat(rel)
     override fun read(rel: String): ByteArray = saf.read(rel)
     override fun openRead(rel: String): InputStream = saf.openRead(rel)
@@ -70,4 +82,26 @@ fun baselineMtimes(store: SyncStore, entries: List<FsEntry>) {
             store.manifestUpsert(e.rel, e.size, e.mtimeNs, row.sha256, nowNs)
         }
     }
+}
+
+/**
+ * Builds a one-level directory listing from a full file list (folder-relative
+ * paths): files directly in [rel] plus the distinct subdirectory names of
+ * everything below it. Empty directories don't appear (same as SAF browsing).
+ */
+fun deriveDirEntries(rel: String, files: List<FsEntry>): List<FsDirEntry> {
+    val prefix = if (rel.isEmpty()) "" else "$rel/"
+    val dirs = sortedSetOf<String>()
+    val out = mutableListOf<FsDirEntry>()
+    for (f in files) {
+        if (prefix.isNotEmpty() && !f.rel.startsWith(prefix)) continue
+        val rest = f.rel.removePrefix(prefix)
+        if ('/' in rest) {
+            dirs.add(rest.substringBefore('/'))
+        } else {
+            out.add(FsDirEntry(f.rel, false, f.size, f.mtimeNs))
+        }
+    }
+    for (name in dirs) out.add(FsDirEntry("$prefix$name", true, 0L, 0L))
+    return out
 }

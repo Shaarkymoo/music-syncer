@@ -17,8 +17,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -28,6 +30,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -87,7 +90,26 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
     var renameRel by remember { mutableStateOf<String?>(null) } // song being renamed
     var deleteRel by remember { mutableStateOf<String?>(null) } // song awaiting delete confirmation
     var moveRel by remember { mutableStateOf<String?>(null) }   // song awaiting playlist pick
+    var query by remember { mutableStateOf("") }                // search box text
+    var results by remember { mutableStateOf<List<FsEntry>?>(null) }
+    var searching by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(query, fs) {
+        if (query.isBlank()) {
+            results = null
+            searching = false
+            return@LaunchedEffect
+        }
+        searching = true
+        val q = query.trim()
+        results = withContext(Dispatchers.IO) {
+            runCatching { fs.list() }.getOrDefault(emptyList())
+                .filter { it.rel.substringAfterLast('/').contains(q, ignoreCase = true) }
+                .sortedBy { it.rel }
+        }
+        searching = false
+    }
 
     val entries by produceState(initialValue = emptyList<BrowserEntry>(), dir, refreshTick, fs) {
         val result = withContext(Dispatchers.IO) { runCatching { fs.listDir(dir) } }
@@ -200,34 +222,69 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
             )
         }
 
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            placeholder = { Text("Search songs…") },
+            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        )
+
         error?.let {
             Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
         }
 
-        LazyColumn(Modifier.fillMaxSize()) {
-            items(entries, key = { (if (it is BrowserEntry.Dir) "d:" else "s:") + it.name }) { entry ->
-                when (entry) {
-                    is BrowserEntry.Dir -> Row(
-                        Modifier.fillMaxWidth().clickable { navigateTo(dirPrefix(dir) + entry.name) }
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text(entry.name, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
-                    }
+        if (query.isNotBlank()) {
+            when {
+                searching -> Row(
+                    Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    horizontalArrangement = Arrangement.Center,
+                ) {
+                    CircularProgressIndicator(modifier = Modifier.padding(end = 12.dp), strokeWidth = 2.dp)
+                    Text("Searching…")
+                }
 
-                    is BrowserEntry.Song -> SongRow(
-                        entry = entry,
-                        menuOpen = menuRel == entry.entry.rel,
-                        enabled = true,
-                        onPlay = { vm.playInExternalPlayer(entry.entry.rel) },
-                        onOpenMenu = { menuRel = entry.entry.rel },
-                        onDismissMenu = { menuRel = null },
-                        onRename = { renameRel = entry.entry.rel },
-                        onMove = { startMove(entry.entry.rel) },
-                        onDelete = { deleteRel = entry.entry.rel },
-                        onEdit = { onEditSong(entry.entry.rel) },
-                    )
+                results.isNullOrEmpty() -> Text(
+                    "No songs match \"${query.trim()}\"",
+                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                )
+
+                else -> LazyColumn(Modifier.fillMaxSize()) {
+                    items(results!!) { e ->
+                        SearchRow(e) {
+                            navigateTo(e.rel.substringBeforeLast('/'))
+                            query = ""
+                        }
+                    }
+                }
+            }
+        } else {
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(entries, key = { (if (it is BrowserEntry.Dir) "d:" else "s:") + it.name }) { entry ->
+                    when (entry) {
+                        is BrowserEntry.Dir -> Row(
+                            Modifier.fillMaxWidth().clickable { navigateTo(dirPrefix(dir) + entry.name) }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                            Text(entry.name, Modifier.padding(start = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                        }
+
+                        is BrowserEntry.Song -> SongRow(
+                            entry = entry,
+                            menuOpen = menuRel == entry.entry.rel,
+                            enabled = true,
+                            onPlay = { vm.playInExternalPlayer(entry.entry.rel) },
+                            onOpenMenu = { menuRel = entry.entry.rel },
+                            onDismissMenu = { menuRel = null },
+                            onRename = { renameRel = entry.entry.rel },
+                            onMove = { startMove(entry.entry.rel) },
+                            onDelete = { deleteRel = entry.entry.rel },
+                            onEdit = { onEditSong(entry.entry.rel) },
+                        )
+                    }
                 }
             }
         }
@@ -286,6 +343,25 @@ private fun SongRow(
             DropdownMenuItem(text = { Text("Move to playlist") }, onClick = { onDismissMenu(); onMove() })
             DropdownMenuItem(text = { Text("Edit metadata") }, onClick = { onDismissMenu(); onEdit() })
             DropdownMenuItem(text = { Text("Delete") }, onClick = { onDismissMenu(); onDelete() })
+        }
+    }
+}
+
+@Composable
+private fun SearchRow(entry: FsEntry, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Filled.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.secondary)
+        Column(Modifier.padding(start = 12.dp)) {
+            Text(entry.rel.substringAfterLast('/'), style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                "in ${entry.rel.substringBeforeLast('/').ifEmpty { "root" }}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
