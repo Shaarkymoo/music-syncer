@@ -25,6 +25,7 @@ private enum class FetchKind { COPIED, FETCHED, NOOP }
 private data class FetchResult(val rel: String, val kind: FetchKind, val size: Long, val mtimeNs: Long, val sha: String?)
 
 private const val WORKERS = 4
+private const val BATCH_FLUSH = 100
 
 /**
  * Applies a plan to the local store. Fetches/copies and deletes run on a small
@@ -71,20 +72,25 @@ fun applyPlan(
         }
         Unit
     }
-    store.withBatch {
-        for (r in fetchResults.filterNotNull()) {
-            when (r.kind) {
-                FetchKind.COPIED -> {
-                    summary.copied.add(r.rel)
-                    store.journalAppend(remoteOps[r.rel] ?: "CREATE", r.rel, r.size, r.sha, nowNs, remoteDevice)
-                    store.manifestUpsert(r.rel, r.size, r.mtimeNs, r.sha, nowNs)
+    // Commit results in loop order, flushing every BATCH_FLUSH so a long copy
+    // phase never holds one open transaction for hours (a kill would roll the
+    // whole phase back; the files survive and the next scan re-derives them).
+    for (start in 0 until fetchResults.size step BATCH_FLUSH) {
+        store.withBatch {
+            for (r in fetchResults.sliceArray(start until minOf(start + BATCH_FLUSH, fetchResults.size)).filterNotNull()) {
+                when (r.kind) {
+                    FetchKind.COPIED -> {
+                        summary.copied.add(r.rel)
+                        store.journalAppend(remoteOps[r.rel] ?: "CREATE", r.rel, r.size, r.sha, nowNs, remoteDevice)
+                        store.manifestUpsert(r.rel, r.size, r.mtimeNs, r.sha, nowNs)
+                    }
+                    FetchKind.FETCHED -> {
+                        summary.fetched.add(r.rel)
+                        store.journalAppend(remoteOps[r.rel] ?: "CREATE", r.rel, r.size, r.sha, nowNs, remoteDevice)
+                        store.manifestUpsert(r.rel, r.size, r.mtimeNs, r.sha, nowNs)
+                    }
+                    FetchKind.NOOP -> {}
                 }
-                FetchKind.FETCHED -> {
-                    summary.fetched.add(r.rel)
-                    store.journalAppend(remoteOps[r.rel] ?: "CREATE", r.rel, r.size, r.sha, nowNs, remoteDevice)
-                    store.manifestUpsert(r.rel, r.size, r.mtimeNs, r.sha, nowNs)
-                }
-                FetchKind.NOOP -> {}
             }
         }
     }
@@ -101,12 +107,15 @@ fun applyPlan(
         }
         Unit
     }
-    store.withBatch {
-        for ((i, rel) in deleteItems.withIndex()) {
-            if (deletedFlags[i] == true) {
-                summary.deleted.add(rel)
-                store.journalAppend("DELETE", rel, null, null, nowNs, remoteDevice)
-                store.manifestDelete(rel)
+    for (start in 0 until deleteItems.size step BATCH_FLUSH) {
+        store.withBatch {
+            for ((i, rel) in deleteItems.withIndex()) {
+                if (i !in start until minOf(start + BATCH_FLUSH, deleteItems.size)) continue
+                if (deletedFlags[i] == true) {
+                    summary.deleted.add(rel)
+                    store.journalAppend("DELETE", rel, null, null, nowNs, remoteDevice)
+                    store.manifestDelete(rel)
+                }
             }
         }
     }
