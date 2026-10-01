@@ -116,6 +116,39 @@ $ADB shell run-as com.musicsyncer.app cat databases/music-sync.db > /tmp/phone.d
 
 ---
 
+## Building & installing updates
+
+```bash
+# 1. Build the new APK:
+export JAVA_HOME=$HOME/.local/share/jdks/jdk-21.0.12.1+1
+export ANDROID_HOME=$HOME/android-sdk
+cd android && ./gradlew :app:assembleDebug && cd ..
+
+# 2. Get it onto the phone — two ways:
+
+# a) WIRELESS (no USB/adb needed — the phone downloads it itself):
+#    - restart the server AFTER rebuilding so /apk serves the new build
+#      (the serve command above sets MS_APK_PATH; /version must report the
+#      new version too — see step 3)
+#    - on the phone: Status screen → "Check for update" → Update → confirm
+#    - the first wireless install asks once to allow "install unknown apps"
+
+# b) WIRED (phone connected via USB, developer options on):
+~/android-sdk/platform-tools/adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+
+# 3. VERSION BUMP (required before any wireless update, or the app says
+#    "Up to date" and refuses):
+#    android/app/build.gradle.kts → versionCode +1, versionName (e.g. "0.1.2")
+#    ms/server.py                 → APP_VERSION = the same versionName
+#    then restart the server. The app only offers an update when the server's
+#    /version is higher than its own.
+```
+
+**When:** every time you ship a change to the phone. Wireless is the no-cable
+path; wired is for when the phone is plugged in.
+
+---
+
 ## Firewall (one-time, already done)
 
 ```bash
