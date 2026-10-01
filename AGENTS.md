@@ -183,9 +183,9 @@ $ADB shell run-as com.musicsyncer.app cat databases/music-sync.db > /tmp/phone.d
 
 ---
 
-## 6. Current state (last checkpoint: real-sync triage + MediaStore fast path, Oct 2026)
+## 6. Current state (last checkpoint: Phase 3 planned, Oct 2026)
 
-- `master` at `a44ac47` — real-sync debugging round merged (fast-path rel-prefix
+- `master` at `1f64ce4` — real-sync debugging round merged (fast-path rel-prefix
   fix, `?`-filename renames, delete-propagation + fresh-state fixes).
 - **Real-sync hang fixed** (`02e39e0`): first sync froze 20+ min in `adoptShas`
   (per-path SAF `exists()` ~200ms × 6k files). Now: `exists` predicate param
@@ -207,10 +207,29 @@ $ADB shell run-as com.musicsyncer.app cat databases/music-sync.db > /tmp/phone.d
   `?` in the filename, which SAF/FAT32 can't store) transferred. Sync now
   takes ~5 s (MediaStore fast list) with zero transfers on identical trees.
   Phone DB state: manifest 6,053, 0 NULL-sha rows, sync_state cursor 6,109.
-- Known remaining work: shared-token auth (deferred), stop-scan button (user
-  deferred — needs cooperative cancellation in `runSyncSession` + UI), any
-  follow-ups from the real sync test.
+- **Version 0.1.1 shipped** (wireless self-update works; version bumps are
+  REQUIRED for each build — see docs/terminal-commands.md "Building &
+  installing updates").
+- **Library restructure (user, 2026-10-02):** `playlists2/{albums,lowkey}` →
+  `albums/`, `lowkey/` (2,444 files). Server journaled DELETE+CREATE; `ms scan
+  --hash` filled all 6,053 shas so the phone content-copies (no downloads).
+  A long one-time copy+delete sync was in flight (interrupted once — resumable;
+  the SAF dir-document cache in `SafFs` cut per-file cost ~6×; expect ~1-2
+  copies/s). **Verify the phone reaches manifest 6,053 / no `playlists2/`
+  leftovers before Phase 3 work.**
+- **Phase 3 PLANNED — optimization & capability pass.** Scope, tasks, tools,
+  and constraints: `docs/superpowers/plans/2026-10-02-phase3-optimizations.md`.
+  Confirmed: parallel bulk ops, opt-in folder-move detection, batched DB
+  writes, concurrent transfers, wake-lock + free-space, conflict viewer, mDNS
+  retry, journal prune (90d, cursor-guarded), multi-select, new-playlist +
+  counts in move dialog, sorting, playlist rename/create, ETA + empty states,
+  stop button, shared-token auth. Pending (Phase 3b): conflict restore, .m3u
+  export, library stats, tag extras, light theme. **Do NOT start implementing
+  without a fresh session reading AGENTS.md + the plan.**
+- Known remaining work: shared-token auth (Phase 3 Task 15), stop-scan button
+  (Phase 3 Task 14), conflict viewer (Task 6), any follow-ups from the real
+  sync test.
 
-**Test counts:** Python 79 · engine 70 · app 27. **Delegated sessions** for
+**Test counts:** Python 81 · engine 70 · app 28. **Delegated sessions** for
 prior work are in `.superpowers/sdd/progress.md`; `notes.md` has the full
 project writeup and design rationale.
