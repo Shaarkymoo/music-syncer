@@ -156,3 +156,25 @@ def test_exception_logged_to_stderr(server, capsys):
     err = capsys.readouterr().err
     assert "ERROR" in err
     assert "/sync" in err
+
+def test_token_auth_required_and_rejected(tmp_path: Path):
+    root = tmp_path / "root"
+    root.mkdir()
+    db_path = tmp_path / "s.db"
+    conn = db.init_db(db_path)
+    conn.close()
+    srv = SyncServer(root, db_path, "laptop", schema_version=1, token="secret")
+    t = threading.Thread(target=srv.serve_forever, daemon=True)
+    t.start()
+    try:
+        base = f"http://127.0.0.1:{srv.port}"
+        hs = _get(f"{base}/handshake?device_id=phone")
+        assert hs["token_required"] is True
+        with pytest.raises(Exception):  # no token -> 401 on a protected endpoint
+            _get(f"{base}/manifest")
+        req = urllib.request.Request(f"{base}/manifest", headers={"Authorization": "Bearer secret"})
+        with urllib.request.urlopen(req) as r:
+            assert r.status == 200  # correct token -> 200
+    finally:
+        srv.shutdown()
+        t.join(timeout=5)

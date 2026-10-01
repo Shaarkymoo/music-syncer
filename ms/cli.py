@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
         db.prune_journal(conn, cutoff, min_cursor)
         print(file=sys.stderr)  # newline after the \r progress line
         conn.close()
-        srv = server_mod.SyncServer(root, db_path, "laptop", port=port, apk_path=cfg["apk_path"])
+        srv = server_mod.SyncServer(root, db_path, "laptop", port=port, apk_path=cfg["apk_path"], token=cfg.get("token"))
         print(f"music-syncer serving {root} on :{srv.port} — Ctrl-C to stop")
         with discovery.advertise("laptop", srv.port):
             try:

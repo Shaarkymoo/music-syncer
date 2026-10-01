@@ -15,6 +15,7 @@ class JvmServer(
     val schemaVersion: Int = 1,
     port: Int = 0,
     private val progress: ProgressListener? = null,
+    private val token: String? = null,
 ) {
     val port: Int
     private val server: HttpServer
@@ -55,11 +56,17 @@ class JvmServer(
                 val params = qs.split('&').filter { it.isNotBlank() }.associate { kv ->
                     val i = kv.indexOf('='); if (i < 0) kv to "" else URLDecoder.decode(kv.substring(0, i), StandardCharsets.UTF_8) to URLDecoder.decode(kv.substring(i + 1), StandardCharsets.UTF_8)
                 }
+                if (token != null && path != "/handshake" &&
+                    exchange.requestHeaders.getFirst("Authorization") != "Bearer $token"
+                ) {
+                    err(exchange, 401, """{"error":"unauthorized"}""")
+                    return@createContext
+                }
                 when (path) {
                     "/handshake" -> {
                         val clientId = params["device_id"] ?: ""
                         val st = store.syncStateGet(clientId)
-                        ok(exchange, GsonHolder.gson.toJson(HandshakeResp(schemaVersion, deviceId, store.journalHead(), st?.lastSeenJournalId ?: 0L)))
+                        ok(exchange, GsonHolder.gson.toJson(HandshakeResp(schemaVersion, deviceId, store.journalHead(), st?.lastSeenJournalId ?: 0L, token != null)))
                     }
                     "/manifest" -> {
                         val man = store.manifestAll().map { ManifestWire(it.path, it.size, it.mtimeNs, it.sha256) }

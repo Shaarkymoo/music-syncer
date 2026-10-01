@@ -30,6 +30,7 @@ data class HandshakeResp(
     @SerializedName("server_device_id") val serverDeviceId: String,
     @SerializedName("server_journal_head") val serverJournalHead: Long,
     @SerializedName("client_cursor") val clientCursor: Long,
+    @SerializedName("token_required") val tokenRequired: Boolean = false,
 )
 data class ManifestWire(val path: String, val size: Long, val mtimeNs: Long, val sha256: String?)
 data class ConflictWire(val path: String, val tsNs: Long, val sha256: String?)

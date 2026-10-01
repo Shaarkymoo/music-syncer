@@ -51,6 +51,7 @@ class SyncController(
     private val ourDevice: String = "phone",
     private val prefs: android.content.SharedPreferences? = null,
     private val freeSpaceProvider: () -> Long? = { null },
+    private val tokenProvider: () -> String? = { null },
 ) {
     private val _state = MutableStateFlow(
         SyncState(
@@ -167,7 +168,7 @@ class SyncController(
         }
         val lock = acquireWakeLock()
         try {
-            val summary = runSyncSession(url, fs, store, ourDevice, progressListener(), cancel = { cancelToken.get() })
+            val summary = runSyncSession(url, fs, store, ourDevice, progressListener(), cancel = { cancelToken.get() }, token = tokenProvider())
             MediaRescan.rescan(context, summary.fetched + summary.copied + summary.deleted + summary.conflicts)
             val lowSpace = free != null && free < 500L * 1024 * 1024
             _state.value = _state.value.copy(

@@ -10,20 +10,23 @@ from ms.progress import Progress, SyncCancelled, SyncPhase, emit
 SCHEMA_VERSION = 1
 
 
-def _http_json(url: str, method: str = "GET", body: bytes | None = None) -> dict:
-    req = urllib.request.Request(url, data=body, method=method,
-                                 headers={"Content-Type": "application/json"} if body else {})
+def _http_json(url: str, method: str = "GET", body: bytes | None = None, token: str | None = None) -> dict:
+    headers = {"Content-Type": "application/json"} if body else {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    req = urllib.request.Request(url, data=body, method=method, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read())
 
 
-def _http_get_bytes(url: str) -> bytes:
-    with urllib.request.urlopen(url, timeout=120) as r:
+def _http_get_bytes(url: str, token: str | None = None) -> bytes:
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=120) as r:
         return r.read()
 
 
 def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str,
-                     progress: Progress | None = None, cancel=None) -> dict:
+                     progress: Progress | None = None, cancel=None, token: str | None = None) -> dict:
     conn = db.init_db(db_path)
     now_ns = time.time_ns()
 
@@ -37,7 +40,7 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
         emit(progress, phase, done, total, rel)
 
     # 1. Handshake: learn server id + how much of OUR journal the server has seen.
-    hs = _http_json(f"{server_url}/handshake?device_id={urllib.parse.quote(our_device)}")
+    hs = _http_json(f"{server_url}/handshake?device_id={urllib.parse.quote(our_device)}", token=token)
     if hs["schema_version"] != SCHEMA_VERSION:
         raise ValueError(f"schema mismatch: server {hs['schema_version']} != client {SCHEMA_VERSION}")
     server_device = hs["server_device_id"]
@@ -58,7 +61,7 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
         "journal_ops": our_ops,
         "manifest": [[p, s, m, h] for p, (s, m, h) in our_manifest.items()],
     }).encode()
-    resp = _http_json(f"{server_url}/sync", method="POST", body=body)
+    resp = _http_json(f"{server_url}/sync", method="POST", body=body, token=token)
     server_ops = resp["server_journal_ops"]
     server_manifest = {p: (s, m, h) for (p, s, m, h) in resp["server_manifest"]}
 
@@ -83,7 +86,7 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
     remote_ops = {op["path"]: op["op"] for op in server_ops}
     summary = apply.apply_plan(root, plan, conn, our_device, server_device, remote_ops,
                                now_ns, lambda rel: _http_get_bytes(
-                                   f"{server_url}/file?path={urllib.parse.quote(rel)}"),
+                                   f"{server_url}/file?path={urllib.parse.quote(rel)}", token=token),
                                progress=progress, cancel=cancel)
 
     # 5. SERVER's plan: what the server needs (fetch = push to it; delete/conflict = applied at /done).
@@ -105,7 +108,7 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
         url = f"{server_url}/file?path={urllib.parse.quote(rel)}"
         if sha:
             url += f"&sha={sha}"
-        _http_json(url, method="POST", body=data)
+        _http_json(url, method="POST", body=data, token=token)
         pushed.append(rel)
 
     # 6. Commit: tell the server to apply its deletions + conflict preservations, advance cursors.
@@ -118,7 +121,7 @@ def run_sync_session(server_url: str, root: Path, db_path: Path, our_device: str
                    "ts_ns": now_ns,
                    "delete": server_plan.delete,
                    "conflicts": [[c[0], c[1], c[2]] for c in server_plan.conflict_loser],
-               }).encode())
+               }).encode(), token=token)
     conn.close()
 
     summary["pushed"] = pushed

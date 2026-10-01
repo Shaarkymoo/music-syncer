@@ -17,6 +17,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -123,6 +124,14 @@ fun StatusScreen(vm: MusicViewModel) {
                 }
             }) { Text("Check for update") }
             updateMsg?.let { Text(it) }
+            var token by remember { mutableStateOf(vm.serverToken ?: "") }
+            OutlinedTextField(
+                value = token,
+                onValueChange = { token = it; vm.serverToken = it },
+                label = { Text("Server token (optional)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
         pendingVersion?.let { v ->
             AlertDialog(

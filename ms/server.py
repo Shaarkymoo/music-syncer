@@ -32,12 +32,14 @@ def _safe_join(root: Path, rel: str) -> Path | None:
 
 class SyncServer:
     def __init__(self, root: Path, db_path: Path, device_id: str, schema_version: int = SCHEMA_VERSION,
-                 port: int = 0, progress: Progress | None = None, apk_path: str | None = None):
+                 port: int = 0, progress: Progress | None = None, apk_path: str | None = None,
+                 token: str | None = None):
         self.root = root
         self.device_id = device_id
         self.schema_version = schema_version
         self._progress = progress
         self.apk_path = apk_path
+        self.token = token
         # ThreadingHTTPServer serves each request on a worker thread; the
         # server's _lock serializes all DB access, so cross-thread use is safe.
         self._conn = db.init_db(db_path, check_same_thread=False)
@@ -80,11 +82,19 @@ class SyncServer:
                 self.end_headers()
                 self.wfile.write(body)
 
+            def _authorized(self, parsed) -> bool:
+                if server.token is None or parsed.path == "/handshake":
+                    return True
+                return self.headers.get("Authorization", "") == f"Bearer {server.token}"
+
             def do_GET(self):
                 _req_start.t = time.monotonic()
                 parsed = urllib.parse.urlparse(self.path)
                 qs = urllib.parse.parse_qs(parsed.query)
                 try:
+                    if not self._authorized(parsed):
+                        self._send_json({"error": "unauthorized"}, 401)
+                        return
                     if parsed.path == "/handshake":
                         client_id = qs.get("device_id", [""])[0]
                         with server._lock:
@@ -95,6 +105,7 @@ class SyncServer:
                                 "server_device_id": server.device_id,
                                 "server_journal_head": db.journal_head(server._conn),
                                 "client_cursor": cursor,
+                                "token_required": server.token is not None,
                             })
                     elif parsed.path == "/manifest":
                         with server._lock:
@@ -139,6 +150,9 @@ class SyncServer:
                 _req_start.t = time.monotonic()
                 parsed = urllib.parse.urlparse(self.path)
                 qs = urllib.parse.parse_qs(parsed.query)
+                if not self._authorized(parsed):
+                    self._send_json({"error": "unauthorized"}, 401)
+                    return
                 length = int(self.headers.get("Content-Length", 0))
                 body = self.rfile.read(length)
                 try:

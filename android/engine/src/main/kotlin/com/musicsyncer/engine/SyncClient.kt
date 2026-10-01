@@ -19,18 +19,22 @@ const val SCHEMA_VERSION = 1
 
 private val JSON = "application/json".toMediaType()
 
-private fun httpJson(client: OkHttpClient, url: String, method: String = "GET", body: String? = null): String {
+private fun httpJson(client: OkHttpClient, url: String, method: String = "GET", body: String? = null, token: String? = null): String {
     val rb = body?.toRequestBody(JSON)
-    val req = Request.Builder().url(url).method(method, rb).build()
+    val reqBuilder = Request.Builder().url(url).method(method, rb)
+    if (token != null) reqBuilder.header("Authorization", "Bearer $token")
+    val req = reqBuilder.build()
     client.newCall(req).execute().use { resp ->
         if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}: ${resp.body?.string()}")
         return resp.body!!.string()
     }
 }
 
-private fun httpBytes(client: OkHttpClient, url: String, method: String = "GET", body: ByteArray? = null): ByteArray {
+private fun httpBytes(client: OkHttpClient, url: String, method: String = "GET", body: ByteArray? = null, token: String? = null): ByteArray {
     val rb = body?.toRequestBody()
-    val req = Request.Builder().url(url).method(method, rb).build()
+    val reqBuilder = Request.Builder().url(url).method(method, rb)
+    if (token != null) reqBuilder.header("Authorization", "Bearer $token")
+    val req = reqBuilder.build()
     client.newCall(req).execute().use { resp ->
         if (!resp.isSuccessful) throw IOException("HTTP ${resp.code}")
         return resp.body!!.bytes()
@@ -38,7 +42,7 @@ private fun httpBytes(client: OkHttpClient, url: String, method: String = "GET",
 }
 
 fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: String, progress: ProgressListener? = null,
-                   cancel: () -> Boolean = { false }): SyncSummary {
+                   cancel: () -> Boolean = { false }, token: String? = null): SyncSummary {
     val client = OkHttpClient()
     // Wall-clock epoch-ns (Python uses time.time_ns()); System.nanoTime() is
     // monotonic-since-boot and incomparable across devices, which would break
@@ -54,11 +58,13 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
 
     // 1. Handshake: learn server id + how much of OUR journal the server has seen.
     val hs = GsonHolder.gson.fromJson(
-        httpJson(client, "$serverUrl/handshake?device_id=${URLEncoder.encode(ourDevice, "UTF-8")}"),
+        httpJson(client, "$serverUrl/handshake?device_id=${URLEncoder.encode(ourDevice, "UTF-8")}", token = token),
         HandshakeResp::class.java,
     )
     if (hs.schemaVersion != SCHEMA_VERSION)
         throw IllegalArgumentException("schema mismatch: server ${hs.schemaVersion} != client $SCHEMA_VERSION")
+    if (hs.tokenRequired && token == null)
+        throw IllegalArgumentException("server requires an auth token — set it in the app's Status screen")
     val serverDevice = hs.serverDeviceId
     val serverCursorForUs = hs.clientCursor  // server.sync_state[us]
 
@@ -77,7 +83,7 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
         manifest = ourManifest.map { (p, v) -> ManifestWire(p, v.first, v.second, v.third) },
     )
     val resp = GsonHolder.gson.fromJson(
-        httpJson(client, "$serverUrl/sync", "POST", GsonHolder.gson.toJson(req)),
+        httpJson(client, "$serverUrl/sync", "POST", GsonHolder.gson.toJson(req), token = token),
         SyncResponse::class.java,
     )
     val serverOps = resp.serverJournalOps
@@ -102,7 +108,7 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
     for ((i, rel) in planItems.withIndex()) emit(progress, SyncPhase.PLAN, i + 1, planItems.size, "")
     val remoteOps = serverOps.associate { it.path to it.op }
     val applied = applyPlan(fs, store, plan, ourDevice, serverDevice, remoteOps, nowNs, progress, cancel) { rel ->
-        httpBytes(client, "$serverUrl/file?path=${URLEncoder.encode(rel, "UTF-8")}")
+        httpBytes(client, "$serverUrl/file?path=${URLEncoder.encode(rel, "UTF-8")}", token = token)
     }
 
     // 5. SERVER's plan: peer_cursor = how much of the SERVER's journal WE have seen.
@@ -122,7 +128,7 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
         emit(progress, SyncPhase.TRANSFER, i + 1, serverPlan.fetch.size, rel)
         val data = fs.read(rel)
         val url = "$serverUrl/file?path=${URLEncoder.encode(rel, "UTF-8")}" + if (sha != null) "&sha=$sha" else ""
-        httpBytes(client, url, "POST", data)
+        httpBytes(client, url, "POST", data, token = token)
         pushed.add(rel)
     }
 
@@ -135,7 +141,7 @@ fun runSyncSession(serverUrl: String, fs: Fs, store: SyncStore, ourDevice: Strin
         delete = serverPlan.delete,
         conflicts = serverPlan.conflictLoser.map { ConflictWire(it.first, it.second, it.third) },
     )
-    httpJson(client, "$serverUrl/done", "POST", GsonHolder.gson.toJson(done))
+    httpJson(client, "$serverUrl/done", "POST", GsonHolder.gson.toJson(done), token = token)
 
     val total = scanned + planItems.size + pushed.size
     emit(progress, SyncPhase.DONE, total, total, "")
