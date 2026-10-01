@@ -50,6 +50,7 @@ class SyncController(
     private val store: SyncStore,
     private val ourDevice: String = "phone",
     private val prefs: android.content.SharedPreferences? = null,
+    private val freeSpaceProvider: () -> Long? = { null },
 ) {
     private val _state = MutableStateFlow(
         SyncState(
@@ -160,13 +161,31 @@ class SyncController(
 
     /** Shared sync body: run the session, rescan media, record the summary. */
     private suspend fun runSync(url: String) {
-        val summary = runSyncSession(url, fs, store, ourDevice, progressListener(), cancel = { cancelToken.get() })
-        MediaRescan.rescan(context, summary.fetched + summary.copied + summary.deleted + summary.conflicts)
-        _state.value = _state.value.copy(
-            lastSync = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date()),
-            lastSummary = "fetched ${summary.fetched.size}, copied ${summary.copied.size}, pushed ${summary.pushed.size}, deleted ${summary.deleted.size}, conflicts ${summary.conflicts.size}",
-        ).also { persist(it) }
-        notify("Sync complete", "fetched ${summary.fetched.size}, copied ${summary.copied.size}, deleted ${summary.deleted.size}")
+        val free = freeSpaceProvider()
+        if (free != null && free < 500L * 1024 * 1024) {
+            notify("Low free space", "Only ${"%.2f GB".format(free / 1073741824.0)} left on the music volume")
+        }
+        val lock = acquireWakeLock()
+        try {
+            val summary = runSyncSession(url, fs, store, ourDevice, progressListener(), cancel = { cancelToken.get() })
+            MediaRescan.rescan(context, summary.fetched + summary.copied + summary.deleted + summary.conflicts)
+            val lowSpace = free != null && free < 500L * 1024 * 1024
+            _state.value = _state.value.copy(
+                lastSync = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date()),
+                lastSummary = "fetched ${summary.fetched.size}, copied ${summary.copied.size}, pushed ${summary.pushed.size}, deleted ${summary.deleted.size}, conflicts ${summary.conflicts.size}" +
+                    if (lowSpace) " · LOW SPACE" else "",
+            ).also { persist(it) }
+            notify("Sync complete", "fetched ${summary.fetched.size}, copied ${summary.copied.size}, deleted ${summary.deleted.size}")
+        } finally {
+            lock?.release()
+        }
+    }
+
+    private fun acquireWakeLock(): android.os.PowerManager.WakeLock? = try {
+        val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as android.os.PowerManager
+        pm.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "music-syncer:sync").also { it.acquire() }
+    } catch (e: Exception) {
+        null
     }
 
     private fun notify(title: String, text: String) {

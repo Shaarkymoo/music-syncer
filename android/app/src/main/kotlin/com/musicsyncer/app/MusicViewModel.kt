@@ -31,6 +31,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
     val fs: Fs? get() = _fs
     private var _saf: SafFs? = null
     private var _lister: MediaStoreLister? = null
+    private var _volumeId: String? = null
     private var _controller: SyncController? = null
     val controller: SyncController? get() = _controller
     val folderName: String? get() = prefs.getString("folder_name", null)
@@ -55,7 +56,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
         _fs = fs
-        if (fs != null) _controller = SyncController(getApplication(), fs, store, prefs = prefs)
+        if (fs != null) _controller = SyncController(getApplication(), fs, store, prefs = prefs, freeSpaceProvider = { freeSpaceBytes() })
     }
 
     /** Rebuilds the Fs (and controller) after the audio permission is granted, so the fast path activates. */
@@ -65,7 +66,7 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val fs = buildFs(app, Uri.parse(uri))
             _fs = fs
-            _controller = SyncController(app, fs, store, prefs = prefs)
+            _controller = SyncController(app, fs, store, prefs = prefs, freeSpaceProvider = { freeSpaceBytes() })
         } catch (e: Exception) {
             // Grant is optional: keep the existing (slow) setup if the rebuild fails.
         }
@@ -86,7 +87,18 @@ class MusicViewModel(app: Application) : AndroidViewModel(app) {
         if (ContextCompat.checkSelfPermission(app, Manifest.permission.READ_MEDIA_AUDIO) != PackageManager.PERMISSION_GRANTED) return null
         val treeId = try { DocumentsContract.getTreeDocumentId(uri) } catch (e: Exception) { return null }
         val (volume, relPath) = volumeAndPath(treeId) ?: return null
+        _volumeId = volume
         return MediaStoreLister(app, volume, relPath)
+    }
+
+    /** Free bytes on the library's volume (SD card), or null if unknown. */
+    fun freeSpaceBytes(): Long? {
+        val volume = _volumeId ?: return null
+        return try {
+            android.os.StatFs("/storage/$volume").availableBytes
+        } catch (e: Exception) {
+            null
+        }
     }
 
     /** Hands [rel] to an external audio player (Samsung Music) via ACTION_VIEW, preferring its MediaStore URI. */
