@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -92,10 +93,13 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
     var menuRel by remember { mutableStateOf<String?>(null) }   // song whose action menu is open
     var renameRel by remember { mutableStateOf<String?>(null) } // song being renamed
     var deleteRel by remember { mutableStateOf<String?>(null) } // song awaiting delete confirmation
-    var moveRel by remember { mutableStateOf<String?>(null) }   // song awaiting playlist pick
+    var moveTargets by remember { mutableStateOf<Set<String>?>(null) } // song(s) awaiting playlist pick
     var newPlaylist by remember { mutableStateOf(false) }        // creating a playlist from the move dialog
     var folderMenuRel by remember { mutableStateOf<String?>(null) } // playlist awaiting an action
     var renameFolderRel by remember { mutableStateOf<String?>(null) } // playlist awaiting a new name
+    var selectionMode by remember { mutableStateOf(false) }     // batch-selection active
+    var selection by remember { mutableStateOf(setOf<String>()) }
+    var multiDelete by remember { mutableStateOf(false) }       // delete confirmation open for the selection
     var query by remember { mutableStateOf("") }                // search box text
     var results by remember { mutableStateOf<List<FsEntry>?>(null) }
     var searching by remember { mutableStateOf(false) }
@@ -151,7 +155,19 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
         }
     }
 
-    fun startMove(rel: String) { moveRel = rel }
+    fun startMove(rel: String) { moveTargets = setOf(rel) }
+
+    fun startMultiMove() { moveTargets = selection }
+
+    fun toggleSelect(rel: String) {
+        selection = if (rel in selection) selection - rel else selection + rel
+        if (selection.isEmpty()) selectionMode = false
+    }
+
+    fun exitSelection() {
+        selectionMode = false
+        selection = emptySet()
+    }
 
     fun confirmRename(rel: String, newName: String) {
         val newRel = dirPrefix(rel.substringBeforeLast('/')) + newName
@@ -164,14 +180,26 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
         runOp { fs.delete(rel) }
     }
 
-    /** Copies the song into the target playlist folder and removes the original (SAF can only rename within a dir). */
-    fun confirmMove(rel: String, playlist: String) {
-        val targetRel = "playlists/$playlist/${rel.substringAfterLast('/')}"
-        moveRel = null
-        if (targetRel == rel) return // already in that playlist
+    fun confirmMultiDelete() {
+        multiDelete = false
+        val rels = selection.toList()
+        exitSelection()
+        if (rels.isEmpty()) return
+        runOp { rels.forEach { fs.delete(it) } }
+    }
+
+    /** Copies [rels] into the target playlist folder and removes the originals (SAF can only rename within a dir). */
+    fun confirmMove(playlist: String, rels: Set<String>) {
+        moveTargets = null
+        if (rels.isEmpty()) return
+        val targets = rels.filter { "playlists/$playlist/${it.substringAfterLast('/')}" != it }
+        exitSelection()
+        if (targets.isEmpty()) return
         runOp {
-            fs.write(targetRel, fs.read(rel))
-            fs.delete(rel)
+            targets.forEach { rel ->
+                fs.write("playlists/$playlist/${rel.substringAfterLast('/')}", fs.read(rel))
+                fs.delete(rel)
+            }
         }
     }
 
@@ -196,7 +224,7 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
         }
 
         // Move-to-playlist dialog: pick one target playlist, stay on this folder.
-        moveRel?.let { rel ->
+        moveTargets?.let { targets ->
             val playlists by produceState(initialValue = emptyList<Pair<String, Int>>(), fs) {
                 value = withContext(Dispatchers.IO) {
                     val all = runCatching { fs.list() }.getOrDefault(emptyList())
@@ -208,17 +236,22 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
                 }
             }
             AlertDialog(
-                onDismissRequest = { moveRel = null },
-                title = { Text("Move \"${rel.substringAfterLast('/')}\" to playlist") },
+                onDismissRequest = { moveTargets = null },
+                title = {
+                    Text(
+                        if (targets.size == 1) "Move \"${targets.first().substringAfterLast('/')}\" to playlist"
+                        else "Move ${targets.size} songs to playlist",
+                    )
+                },
                 text = {
                     if (playlists.isEmpty()) {
                         Text("No playlists found under playlists/")
                     } else {
                         LazyColumn(Modifier.heightIn(max = 360.dp)) {
                             items(playlists) { (name, count) ->
-                                val alreadyThere = rel.substringBeforeLast('/') == "playlists/$name"
+                                val alreadyThere = targets.all { it.substringBeforeLast('/') == "playlists/$name" }
                                 TextButton(
-                                    onClick = { confirmMove(rel, name) },
+                                    onClick = { confirmMove(name, targets) },
                                     enabled = !alreadyThere,
                                     modifier = Modifier.fillMaxWidth(),
                                 ) { Text("$name  ·  $count song${if (count == 1) "" else "s"}", Modifier.fillMaxWidth()) }
@@ -228,8 +261,8 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
                 },
                 confirmButton = {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TextButton(onClick = { newPlaylist = true; moveRel = null }) { Text("+ New playlist") }
-                        TextButton(onClick = { moveRel = null }) { Text("Cancel") }
+                        TextButton(onClick = { newPlaylist = true; moveTargets = null }) { Text("+ New playlist") }
+                        TextButton(onClick = { moveTargets = null }) { Text("Cancel") }
                     }
                 },
             )
@@ -247,11 +280,11 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
                             val n = name.trim()
                             newPlaylist = false
                             if (n.isNotEmpty()) {
-                                val current = moveRel
-                                moveRel = null
+                                val targets = selection
+                                exitSelection()
                                 runOp {
                                     fs.mkdirs("playlists/$n")
-                                    current?.let { rel ->
+                                    targets.forEach { rel ->
                                         fs.write("playlists/$n/${rel.substringAfterLast('/')}", fs.read(rel))
                                         fs.delete(rel)
                                     }
@@ -324,6 +357,19 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
         )
 
+        if (selectionMode) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("${selection.size} selected", Modifier.weight(1f), style = MaterialTheme.typography.titleSmall)
+                TextButton(onClick = { startMultiMove() }, enabled = selection.isNotEmpty()) { Text("Move to playlist") }
+                TextButton(onClick = { multiDelete = true }, enabled = selection.isNotEmpty()) { Text("Delete") }
+                IconButton(onClick = { exitSelection() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Exit selection") }
+            }
+        }
+
         error?.let {
             Text(it, Modifier.fillMaxWidth().padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error)
         }
@@ -377,10 +423,17 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
 
                         is BrowserEntry.Song -> SongRow(
                             entry = entry,
-                            menuOpen = menuRel == entry.entry.rel,
+                            menuOpen = menuRel == entry.entry.rel && !selectionMode,
                             enabled = true,
+                            selected = selectionMode && entry.entry.rel in selection,
+                            selectionMode = selectionMode,
                             onPlay = { vm.playInExternalPlayer(entry.entry.rel) },
-                            onOpenMenu = { menuRel = entry.entry.rel },
+                            onOpenMenu = { if (selectionMode) toggleSelect(entry.entry.rel) else menuRel = entry.entry.rel },
+                            onLongPress = {
+                                selectionMode = true
+                                selection = setOf(entry.entry.rel)
+                            },
+                            onToggle = { toggleSelect(entry.entry.rel) },
                             onDismissMenu = { menuRel = null },
                             onRename = { renameRel = entry.entry.rel },
                             onMove = { startMove(entry.entry.rel) },
@@ -399,6 +452,15 @@ fun BrowserScreen(vm: MusicViewModel, onEditSong: (String) -> Unit = {}) {
     deleteRel?.let { rel ->
         DeleteDialog(rel, onConfirm = { confirmDelete(rel) }, onDismiss = { deleteRel = null })
     }
+    if (multiDelete) {
+        AlertDialog(
+            onDismissRequest = { multiDelete = false },
+            title = { Text("Delete ${selection.size} songs?") },
+            text = { Text("This cannot be undone.") },
+            confirmButton = { TextButton(onClick = { confirmMultiDelete() }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { multiDelete = false }) { Text("Cancel") } },
+        )
+    }
 }
 
 @Composable
@@ -411,13 +473,18 @@ private fun Breadcrumb(label: String, onClick: () -> Unit) {
     )
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun SongRow(
     entry: BrowserEntry.Song,
     menuOpen: Boolean,
     enabled: Boolean,
+    selected: Boolean,
+    selectionMode: Boolean,
     onPlay: () -> Unit,
     onOpenMenu: () -> Unit,
+    onLongPress: () -> Unit,
+    onToggle: () -> Unit,
     onDismissMenu: () -> Unit,
     onRename: () -> Unit,
     onMove: () -> Unit,
@@ -426,16 +493,21 @@ private fun SongRow(
 ) {
     Box {
         Row(
-            Modifier.fillMaxWidth().clickable(enabled = enabled) { onOpenMenu() }
+            Modifier.fillMaxWidth()
+                .combinedClickable(enabled = enabled, onClick = onOpenMenu, onLongClick = onLongPress)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                Icons.Filled.PlayArrow,
-                contentDescription = "Play in external player",
-                tint = MaterialTheme.colorScheme.secondary,
-                modifier = Modifier.clickable { onPlay() },
-            )
+            if (selectionMode) {
+                Checkbox(checked = selected, onCheckedChange = { onToggle() })
+            } else {
+                Icon(
+                    Icons.Filled.PlayArrow,
+                    contentDescription = "Play in external player",
+                    tint = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.clickable { onPlay() },
+                )
+            }
             Column(Modifier.padding(start = 12.dp).weight(1f)) {
                 Text(entry.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(formatSize(entry.entry.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
